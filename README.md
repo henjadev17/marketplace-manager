@@ -1,43 +1,142 @@
-# Marketplace Manager v0.9.2 — layout estable
+# Marketplace Manager
 
-Esta versión corrige el descuadre del panel derecho al cambiar el tamaño de la ventana.
+Aplicación de escritorio para Windows que organiza productos, fotografías y textos
+para publicar manualmente en Marketplace. Versión estable: **v0.9.2**.
+Incluye formulario adaptable, apariencia clara/oscura/sistema, plantillas, valores
+predeterminados, fotos, cuadrícula Publicar/Copiar y exportación XLSX.
 
-## Cambios
+## Arquitectura
 
-- Panel de creación de producto dentro de un `QScrollArea`.
-- El formulario ya no se aplasta cuando falta altura.
-- Ancho mínimo estable para el panel derecho.
-- Alturas mínimas reales en:
-  - plantilla
-  - título
-  - precio
-  - categoría
-  - ubicación
-  - estado
-- Descripción con mayor altura mínima.
-- Vista previa con mayor altura.
-- Splitter con límites para evitar colapsos.
-- Ventana con tamaño mínimo razonable.
+- `app/main.py`: entrada de Qt; ejecutar con `python -m app.main`.
+- `app/config.py`: rutas de datos, extensiones de imagen y plantilla inicial.
+- `app/data/database.py`: SQLite, migraciones aditivas, configuración, plantillas,
+  productos y copia/renombrado de fotos administradas.
+- `app/services/`: plantillas, XLSX con openpyxl y miniaturas con Pillow y tareas Qt.
+- `app/ui/`: ventana principal, formularios, galería, temas y diálogos.
+- `tests/`: regresiones de negocio sin ventanas Qt.
+- `scripts/`: comandos PowerShell de desarrollo y empaquetado.
+- `.github/workflows/tests.yml`: validación en Windows.
 
-## Qué se mantiene
+Se conserva la estructura y comportamiento de v0.9.2. Las dependencias siguen en
+`requirements.txt`; `requirements-dev.txt` agrega pytest. `pyproject.toml` lee las
+dependencias del archivo existente y configura pytest.
 
-- dark mode / claro / sistema;
-- plantillas;
-- valores predeterminados;
-- galería y miniaturas;
-- copia y renombrado de fotos;
-- edición de productos;
-- lista Publicar / Copiar;
-- Excel;
-- SQLite.
+## Instalación
 
-## Ejecutar
+Usar Windows, Git y Python 3.11 o superior con el lanzador `py`. CI usa Python 3.11.
+Desde PowerShell:
 
 ```powershell
-py -m venv .venv
+git clone https://github.com/henjadev17/marketplace-manager.git
+cd marketplace-manager
+.\scripts\setup.ps1
+.\scripts\run.ps1
+```
+
+Setup crea `.venv` si falta, la activa e instala las dependencias de aplicación y
+desarrollo. Los scripts resuelven la raíz desde su ubicación y propagan errores.
+Si una política local bloquea scripts, consultar la política de PowerShell del equipo.
+Instalación manual equivalente:
+
+```powershell
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m app.main
 ```
 
-O usa `run.bat`.
+El lanzador heredado `run.bat` sigue disponible.
+
+## Comandos de desarrollo
+
+| Comando | Acción |
+| --- | --- |
+| `.\scripts\setup.ps1` | Preparar entorno y dependencias |
+| `.\scripts\run.ps1` | Iniciar la aplicación |
+| `.\scripts\test.ps1` | Ejecutar pytest |
+| `.\scripts\test.ps1 -k template` | Filtrar pruebas |
+| `.\scripts\build.ps1` | Generar distribución PyInstaller para Windows |
+
+Build genera `dist/MarketplaceManager/MarketplaceManager.exe`, archivos de trabajo
+en `build/` y un `.spec` local ignorado. Puede reemplazar una distribución previa en
+`dist/`; no incorpora ni limpia datos personales. Es una base de empaquetado, no un
+instalador firmado: validar manualmente el ejecutable antes de distribuirlo.
+
+## Datos de usuario
+
+Los datos se guardan **fuera del repositorio**:
+
+```text
+%USERPROFILE%\Documents\MarketplaceManager\
+├── marketplace.db
+├── media\
+├── cache\
+│   └── thumbnails\
+└── exports\
+```
+
+La implementación utiliza `Path.home() / "Documents" / "MarketplaceManager"`.
+Las fotos seleccionadas se copian a `media/PROD-XXXX/PROD-XXXX-01.ext`.
+Eliminar un producto elimina sus copias administradas; las fotos originales
+externas se conservan. No usar la carpeta de copias administradas como fuente de originales.
+
+Nunca agregar, mover, borrar o modificar la base de producción ni sus medios durante
+limpieza del repositorio. Setup, pruebas y build no operan sobre esa carpeta.
+Ejecutar la aplicación normalmente sí utiliza los datos reales.
+
+## Pruebas
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m compileall app
+pytest
+```
+
+La suite cubre códigos de producto, saltos de línea, información de plantilla,
+copias y renombrado, reordenamiento (incluido original ausente), eliminación segura,
+fallos parciales de creación, migraciones y valores iniciales.
+
+`tests/conftest.py` sustituye home antes de recolectar pruebas, porque la configuración
+fija rutas al importar módulos. Una fixture automática redirige rutas y el argumento
+predeterminado de Database a almacenamiento temporal por prueba. Las imágenes se
+crean con Pillow y las bases SQLite son temporales. No abrir ventanas ni instanciar
+la aplicación real en estas pruebas. Para nuevos módulos que importen rutas por
+valor, redirigir también esas referencias. CI ejecuta sintaxis y pytest en
+`windows-latest`; no valida diseño visual.
+
+## Flujo Git y versiones
+
+Crear ramas desde `main`, mantener cambios enfocados y abrir un pull request hacia
+`main`. No desarrollar directamente sobre `main`. Esta infraestructura usa
+`chore/project-infrastructure`. Antes de subir cambios, ejecutar sintaxis y pytest.
+
+```powershell
+git switch main
+git pull --ff-only
+git switch -c chore/nombre-del-cambio
+# Editar y validar
+git add <archivos-revisados>
+git commit -m "chore: describir el cambio"
+git push -u origin chore/nombre-del-cambio
+```
+
+Usar versiones `MAJOR.MINOR.PATCH` y etiquetas `vX.Y.Z`: PATCH para correcciones
+compatibles, MINOR para funciones compatibles y MAJOR para cambios incompatibles.
+Registrar cambios en `CHANGELOG.md` bajo Unreleased; al publicar, crear la sección
+de versión y sincronizar metadatos y título de ventana. Esta infraestructura
+mantiene 0.9.2 y no crea una nueva publicación.
+
+## Aspectos existentes para tareas futuras
+
+- Database mezcla persistencia con archivos y crea directorios globales incluso
+  al recibir una base personalizada.
+- SQLite y el reemplazo de carpetas de fotos no forman una transacción atómica;
+  un fallo después del reemplazo puede dejar archivos y registros desalineados.
+- Los códigos usan MAX + 1, pueden reutilizarse tras borrar el último producto
+  y no coordinan creaciones concurrentes.
+- `products.template_id` no tiene clave foránea; borrar plantillas puede dejar
+  referencias antiguas, aunque la interfaz dispone de valores alternativos.
+- El diálogo heredado `template_dialog.py` llama a `save_template_settings`, que
+  ya no existe; la ventana principal utiliza `TemplateManagerDialog`.
+
+Estos puntos se documentan sin refactorizar ni cambiar el comportamiento estable.
