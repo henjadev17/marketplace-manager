@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an Open photo folder action to the product photo manager for accessing saved images in Windows Explorer.
+
 - Add isolated business regression tests and Windows CI.
 - Add PowerShell setup, run, test, and build commands.
 - Document architecture, data safety, and contribution workflow.

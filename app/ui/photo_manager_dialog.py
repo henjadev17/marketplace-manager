@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.config import IMAGE_EXTENSIONS
+from app.config import IMAGE_EXTENSIONS, MEDIA_DIR
 from app.services.thumbnail_service import build_thumbnail
 from app.ui.preview_dialog import ImagePreviewDialog
 from app.ui.ui_helpers import set_button_role
@@ -51,6 +52,17 @@ class ProductPhotosDialog(QDialog):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+
+        folder_row = QHBoxLayout()
+        open_folder_btn = QPushButton("📂 Abrir carpeta de fotos")
+        open_folder_btn.setToolTip("Abrir las fotos guardadas del producto en el Explorador de Windows")
+        open_folder_btn.clicked.connect(self.open_photo_folder)
+        folder_row.addWidget(open_folder_btn)
+        folder_note = QLabel("Si cambias las fotos o su orden, guarda antes de subirlas a Marketplace.")
+        folder_note.setWordWrap(True)
+        folder_note.setProperty("role", "muted")
+        folder_row.addWidget(folder_note, 1)
+        layout.addLayout(folder_row)
 
         self.list = QListWidget()
         self.list.setViewMode(QListWidget.IconMode)
@@ -98,6 +110,25 @@ class ProductPhotosDialog(QDialog):
         layout.addLayout(buttons)
 
         self.load_existing(full["photos"])
+
+    def open_photo_folder(self):
+        folder = MEDIA_DIR / self.product["code"]
+        if not folder.is_dir():
+            QMessageBox.warning(
+                self,
+                "Carpeta no encontrada",
+                f"No se encontró la carpeta de fotos guardadas del producto:\n{folder}",
+            )
+            return
+
+        try:
+            os.startfile(str(folder))
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "No se pudo abrir la carpeta",
+                f"Abre esta ubicación manualmente:\n{folder}\n\n{exc}",
+            )
 
     def load_existing(self, photos):
         for photo in photos:
