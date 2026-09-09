@@ -13,7 +13,7 @@ predeterminados, fotos, cuadrícula Publicar/Copiar y exportación XLSX.
   productos y copia/renombrado de fotos administradas.
 - `app/services/`: plantillas, XLSX con openpyxl y miniaturas con Pillow y tareas Qt.
 - `app/ui/`: ventana principal, formularios, galería, temas y diálogos.
-- `tests/`: regresiones de negocio sin ventanas Qt.
+- `tests/`: regresiones de negocio y una comprobación de errores de inicio con Qt sin pantalla.
 - `scripts/`: comandos PowerShell de desarrollo y empaquetado.
 - `.github/workflows/tests.yml`: validación en Windows.
 
@@ -86,6 +86,34 @@ Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
 ## Pruebas
 
+### Guardado seguro de fotos
+
+Al guardar el orden o cambiar fotos de un producto existente, la aplicación prepara
+y verifica las copias antes de reemplazarlas. Conserva la carpeta anterior hasta
+confirmar las referencias nuevas en SQLite. Si falla el guardado, restaura el
+estado anterior. Al abrir la aplicación recupera operaciones interrumpidas:
+conserva las fotos nuevas si SQLite confirmó el guardado, o recupera las anteriores
+si no lo confirmó. Si la recuperación no puede completarse, muestra un mensaje
+antes de cerrar, conservando los archivos pendientes.
+
+Los archivos temporales de recuperación se guardan dentro de
+`media/.photo-operations/`, separados por base de datos. No borrar esta carpeta
+manualmente: puede contener el respaldo necesario para una operación pendiente.
+Si Windows mantiene un archivo bloqueado, cerrar los programas que lo usan y
+volver a abrir la aplicación. Si el registro está dañado, se conservan los archivos
+y se detiene la recuperación para evitar una eliminación insegura.
+
+No se permite seleccionar `media` ni sus copias como fuentes de fotos nuevas.
+Un escaneo recursivo de una carpeta superior omite esos archivos. Las fotos ya
+asociadas pueden seguir usando sus propias copias si falta el original externo.
+
+Esta protección cubre errores de guardado y cierre abrupto del proceso; no sustituye
+un respaldo general frente a fallos físicos de disco. No cambia los códigos de
+producto ni el flujo de creación/eliminación de productos, salvo la validación de
+fuentes y la recuperación pendiente antes de eliminar.
+
+### Ejecutar la suite
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python -m compileall app
@@ -99,8 +127,9 @@ fallos parciales de creación, migraciones y valores iniciales.
 `tests/conftest.py` sustituye home antes de recolectar pruebas, porque la configuración
 fija rutas al importar módulos. Una fixture automática redirige rutas y el argumento
 predeterminado de Database a almacenamiento temporal por prueba. Las imágenes se
-crean con Pillow y las bases SQLite son temporales. No abrir ventanas ni instanciar
-la aplicación real en estas pruebas. Para nuevos módulos que importen rutas por
+crean con Pillow y las bases SQLite son temporales. La prueba del mensaje de inicio
+utiliza Qt en modo `offscreen`, un home temporal y un error simulado antes de abrir
+la ventana principal. Para nuevos módulos que importen rutas por
 valor, redirigir también esas referencias. CI ejecuta sintaxis y pytest en
 `windows-latest`; no valida diseño visual.
 
@@ -130,8 +159,9 @@ mantiene 0.9.2 y no crea una nueva publicación.
 
 - Database mezcla persistencia con archivos y crea directorios globales incluso
   al recibir una base personalizada.
-- SQLite y el reemplazo de carpetas de fotos no forman una transacción atómica;
-  un fallo después del reemplazo puede dejar archivos y registros desalineados.
+- SQLite y los archivos siguen siendo sistemas separados; el guardado de fotos
+  existentes ahora utiliza un registro recuperable. La creación y eliminación
+  de productos podrían recibir una protección equivalente en una tarea futura.
 - Los códigos usan MAX + 1, pueden reutilizarse tras borrar el último producto
   y no coordinan creaciones concurrentes.
 - `products.template_id` no tiene clave foránea; borrar plantillas puede dejar

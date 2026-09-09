@@ -399,7 +399,12 @@ class MainWindow(QMainWindow):
             return
         if scan:
             self.statusBar().showMessage("Escaneando carpeta...")
-            seen = self.db.scan_folder(self.current_folder, recursive=self.recursive.isChecked())
+            try:
+                seen = self.db.scan_folder(self.current_folder, recursive=self.recursive.isChecked())
+            except (ValueError, OSError) as exc:
+                self.statusBar().showMessage("No se pudo escanear la carpeta")
+                QMessageBox.warning(self, "No se pudo escanear", str(exc))
+                return
             self.statusBar().showMessage(f"Escaneo completado: {seen} imágenes")
         self.refresh_gallery()
 

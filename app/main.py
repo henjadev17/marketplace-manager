@@ -1,5 +1,6 @@
 import sys
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
+from app.services.photo_storage import PhotoRecoveryError
 from app.ui.main_window import MainWindow
 
 def main():
@@ -7,7 +8,11 @@ def main():
     app.setApplicationName("Marketplace Manager")
     app.setOrganizationName("MarketplaceManager")
     app.setStyle("Fusion")
-    window = MainWindow()
+    try:
+        window = MainWindow()
+    except PhotoRecoveryError as exc:
+        QMessageBox.critical(None, "No se pudieron recuperar las fotos", str(exc))
+        sys.exit(1)
     window.show()
     sys.exit(app.exec())
 
