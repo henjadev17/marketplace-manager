@@ -1,3 +1,4 @@
+import logging
 import shutil
 import sqlite3
 from contextlib import contextmanager
@@ -10,6 +11,11 @@ from app.config import (
     MEDIA_DIR,
     ensure_app_dirs,
 )
+from app.services.photo_storage import (
+    PhotoRecoveryError, PhotoStorage, is_managed_source, validate_original,
+)
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = '''
 PRAGMA foreign_keys = ON;
@@ -62,6 +68,10 @@ CREATE TABLE IF NOT EXISTS templates (
 
 CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
 CREATE INDEX IF NOT EXISTS idx_product_photos_photo ON product_photos(photo_id);
+
+CREATE TABLE IF NOT EXISTS photo_file_commits (
+    operation_id TEXT PRIMARY KEY
+);
 '''
 
 
@@ -72,6 +82,7 @@ class Database:
         with self.connection() as con:
             con.executescript(SCHEMA)
             self._migrate(con)
+        self._recover_photo_operations()
         self._ensure_default_settings()
 
     @contextmanager
@@ -278,10 +289,13 @@ class Database:
         }
 
     def scan_folder(self, folder: Path, recursive=False):
+        validate_original(folder, MEDIA_DIR)
         iterator = folder.rglob("*") if recursive else folder.iterdir()
         seen = 0
         with self.connection() as con:
             for path in iterator:
+                if is_managed_source(path, MEDIA_DIR):
+                    continue
                 if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
                     continue
                 seen += 1
@@ -360,6 +374,10 @@ class Database:
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def create_product(self, data, photo_ids):
+        # Validate even legacy photo records before creating any managed files.
+        with self.connection() as con:
+            for photo in self._photo_rows_by_ids(con, photo_ids):
+                validate_original(photo["original_path"], MEDIA_DIR)
         code = self.next_product_code()
         product_dir = MEDIA_DIR / code
         product_dir.mkdir(parents=True, exist_ok=True)
@@ -430,6 +448,7 @@ class Database:
 
     def register_photo_file(self, path: Path):
         path = Path(path).resolve()
+        validate_original(path, MEDIA_DIR)
 
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"No existe la imagen:\n{path}")
@@ -464,115 +483,85 @@ class Database:
 
             return int(row["id"])
 
+    def _recover_photo_operations(self):
+        with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            PhotoStorage(MEDIA_DIR, self.db_path).recover(con)
+
     def sync_product_photos(self, product_id, ordered_photo_ids):
-        """
-        Reordena, agrega o quita fotos del producto y reconstruye sus
-        copias administradas:
-        PROD-XXXX-01.ext, PROD-XXXX-02.ext, ...
-        """
-        full = self.get_product(product_id)
-
-        if not full:
-            raise ValueError("El producto no existe.")
-
+        """Save ordered photo copies, retaining the previous folder until commit."""
         if not ordered_photo_ids:
             raise ValueError("El producto debe conservar al menos una foto.")
+        if len(set(ordered_photo_ids)) != len(ordered_photo_ids):
+            raise ValueError("Una foto no puede repetirse en el mismo producto.")
 
-        code = full["product"]["code"]
-        product_dir = MEDIA_DIR / code
-        temp_dir = MEDIA_DIR / f".{code}-tmp"
-
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
-        old_by_id = {
-            int(photo["id"]): photo
-            for photo in full["photos"]
-        }
-
+        storage = PhotoStorage(MEDIA_DIR, self.db_path)
         try:
             with self.connection() as con:
-                photo_rows = self._photo_rows_by_ids(
-                    con,
-                    ordered_photo_ids,
-                )
-
-            if len(photo_rows) != len(ordered_photo_ids):
-                raise RuntimeError(
-                    "No se encontraron todas las fotos seleccionadas."
-                )
-
-            staged = []
-
-            for position, row in enumerate(photo_rows, start=1):
-                photo_id = int(row["id"])
-                original = Path(row["original_path"])
-                source = original
-
-                if not source.exists():
-                    previous = old_by_id.get(photo_id)
-                    previous_copy = None
-
-                    if previous and previous.get("copied_path"):
-                        previous_copy = Path(previous["copied_path"])
-
-                    if previous_copy and previous_copy.exists():
-                        source = previous_copy
-                    else:
-                        raise FileNotFoundError(
-                            "No se encontró ni el original ni una copia "
-                            f"administrada de:\n{row['filename']}"
-                        )
-
-                ext = source.suffix.lower() or ".jpg"
-                staged_path = temp_dir / f"{code}-{position:02d}{ext}"
-                shutil.copy2(source, staged_path)
-                staged.append((photo_id, staged_path.name))
-
-            # Reemplazo de carpeta final después de que todas las copias
-            # temporales terminaron correctamente.
-            if product_dir.exists():
-                shutil.rmtree(product_dir)
-
-            temp_dir.rename(product_dir)
-
-            with self.connection() as con:
-                con.execute(
-                    "DELETE FROM product_photos WHERE product_id = ?",
+                con.execute("BEGIN IMMEDIATE")
+                storage.recover(con)
+                product = con.execute("SELECT code FROM products WHERE id = ?",
+                                      (product_id,)).fetchone()
+                if not product:
+                    raise ValueError("El producto no existe.")
+                code = product["code"]
+                final = storage.product_folder(code)
+                old = {row["photo_id"]: row["copied_path"] for row in con.execute(
+                    "SELECT photo_id, copied_path FROM product_photos WHERE product_id = ?",
                     (product_id,),
-                )
-
-                for position, (photo_id, filename) in enumerate(
-                    staged,
-                    start=1,
-                ):
-                    final_path = product_dir / filename
-
+                )}
+                rows = self._photo_rows_by_ids(con, ordered_photo_ids)
+                if len(rows) != len(ordered_photo_ids):
+                    raise ValueError("No se encontraron todas las fotos seleccionadas.")
+                sources = []
+                for row in rows:
+                    source = Path(row["original_path"])
+                    if is_managed_source(source, MEDIA_DIR) or not source.is_file():
+                        # Existing photos may fall back only to this product's own
+                        # saved copy, never to another product's managed files.
+                        previous = old.get(row["id"])
+                        if previous:
+                            saved = Path(previous).resolve()
+                            if saved.parent == final.resolve() and saved.is_file():
+                                source = saved
+                            else:
+                                validate_original(source, MEDIA_DIR)
+                                raise FileNotFoundError(f"No se encontró una copia propia de: {row['filename']}")
+                        else:
+                            validate_original(source, MEDIA_DIR)
+                            raise FileNotFoundError(f"No existe la imagen original: {source}")
+                    sources.append((row["id"], source))
+                operation, staged = storage.prepare(code, sources)
+                storage.install(operation, code)
+                con.execute("DELETE FROM product_photos WHERE product_id = ?", (product_id,))
+                for position, (photo_id, filename) in enumerate(staged, 1):
                     con.execute(
-                        """
-                        INSERT INTO product_photos(
-                            product_id, photo_id, position, copied_path
-                        )
-                        VALUES(?, ?, ?, ?)
-                        """,
-                        (
-                            product_id,
-                            photo_id,
-                            position,
-                            str(final_path.resolve()),
-                        ),
+                        "INSERT INTO product_photos(product_id, photo_id, position, copied_path) "
+                        "VALUES (?, ?, ?, ?)",
+                        (product_id, photo_id, position, str((final / filename).resolve())),
                     )
-
-            return [
-                str((product_dir / filename).resolve())
-                for _, filename in staged
-            ]
-
+                con.execute("INSERT INTO photo_file_commits(operation_id) VALUES (?)",
+                            (operation.name,))
+            # connection() has committed before cleanup. Recovery consults the
+            # durable marker, including when commit outcome is uncertain.
         except Exception:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            try:
+                self._recover_photo_operations()
+            except Exception as recovery_error:
+                raise PhotoRecoveryError(
+                    "No se pudo restaurar la operación de fotos. Conserva las carpetas "
+                    "de recuperación y vuelve a abrir la aplicación cuando los archivos "
+                    "estén disponibles. " + str(recovery_error)
+                ) from recovery_error
             raise
+
+        try:
+            self._recover_photo_operations()
+        except (OSError, PhotoRecoveryError, sqlite3.Error):
+            # The save is committed: never report it as rolled back or destroy
+            # its recovery evidence just because backup cleanup is blocked.
+            logger.exception("Fotos guardadas; limpieza de respaldo pendiente")
+        return [str((final / filename).resolve()) for _, filename in staged]
 
     def update_product_status(self, product_id, status):
         allowed = {
@@ -655,15 +644,15 @@ class Database:
             )
 
     def delete_product(self, product_id):
-        full = self.get_product(product_id)
-        if not full:
-            return
-
-        code = full["product"]["code"]
         with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            storage = PhotoStorage(MEDIA_DIR, self.db_path)
+            storage.recover(con)
+            product = con.execute("SELECT code FROM products WHERE id = ?", (product_id,)).fetchone()
+            if not product:
+                return
+            product_dir = storage.product_folder(product["code"])
             con.execute("DELETE FROM products WHERE id = ?", (product_id,))
-
-        product_dir = MEDIA_DIR / code
         if product_dir.exists():
             shutil.rmtree(product_dir, ignore_errors=True)
 
