@@ -13,7 +13,7 @@ predeterminados, fotos, cuadrícula Publicar/Copiar y exportación XLSX.
   productos y copia/renombrado de fotos administradas.
 - `app/services/`: plantillas, XLSX con openpyxl y miniaturas con Pillow y tareas Qt.
 - `app/ui/`: ventana principal, formularios, galería, temas y diálogos.
-- `tests/`: regresiones de negocio y una comprobación de errores de inicio con Qt sin pantalla.
+- `tests/`: regresiones de negocio, errores de inicio y edición de plantillas con Qt sin pantalla.
 - `scripts/`: comandos PowerShell de desarrollo y empaquetado.
 - `.github/workflows/tests.yml`: validación en Windows.
 
@@ -85,6 +85,16 @@ limpieza del repositorio. Setup, pruebas y build no operan sobre esa carpeta.
 Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
 ## Pruebas
+
+### Cambios pendientes en plantillas
+
+Al modificar el nombre o contenido de una plantilla, cambiar a otra o cerrar el
+editor ofrece **Guardar**, **Descartar** y **Cancelar**. Cancelar conserva el texto
+y la selección. Si falla el guardado, el editor permanece abierto con el borrador.
+La protección también se aplica antes de crear, duplicar o eliminar una plantilla.
+Cambiar la plantilla predeterminada conserva el texto en edición. Las pruebas
+ejercitan las decisiones del diálogo, errores de guardado y navegación mediante
+ratón, teclado y Escape en modo `offscreen`, usando bases temporales.
 
 ### Guardado seguro de fotos
 
