@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSignalBlocker, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
@@ -12,6 +12,8 @@ class TemplateManagerDialog(QDialog):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
+        self._loaded_id = None
+        self._saved_content = None
         self.setWindowTitle("Administrar plantillas")
         self.resize(1000, 720)
         root = QVBoxLayout(self)
@@ -45,50 +47,162 @@ class TemplateManagerDialog(QDialog):
         self.refresh()
 
     def selected_id(self):
-        item=self.list.currentItem(); return item.data(Qt.UserRole) if item else None
+        item = self.list.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def _content(self):
+        return self.name.text(), normalize_newlines(self.body.toPlainText())
+
+    def _select(self, template_id):
+        with QSignalBlocker(self.list):
+            for index in range(self.list.count()):
+                if self.list.item(index).data(Qt.UserRole) == template_id:
+                    self.list.setCurrentRow(index)
+                    return
+
+    def _load(self, template_id):
+        template = self.db.get_template(template_id)
+        if template:
+            self._loaded_id = template_id
+            self.name.setText(template['name'])
+            self.body.setPlainText(template['body'])
+            self._saved_content = self._content()
 
     def refresh(self, select_id=None):
-        templates=self.db.list_templates(); default_id=self.db.get_default_template_id(); self.list.clear()
-        for t in templates:
-            label=("★ " if t["id"]==default_id else "")+t["name"]
-            item=QListWidgetItem(label); item.setData(Qt.UserRole,t["id"]); self.list.addItem(item)
-        target=select_id or default_id
-        for i in range(self.list.count()):
-            if self.list.item(i).data(Qt.UserRole)==target:
-                self.list.setCurrentRow(i); break
-        if self.list.currentRow()<0 and self.list.count(): self.list.setCurrentRow(0)
+        # Callers resolve pending edits before rebuilding the list.
+        templates = self.db.list_templates()
+        default_id = self.db.get_default_template_id()
+        target = select_id or default_id
+        with QSignalBlocker(self.list):
+            self.list.clear()
+            for template in templates:
+                label = ('★ ' if template['id'] == default_id else '') + template['name']
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, template['id'])
+                self.list.addItem(item)
+            self._select(target)
+            if self.list.currentRow() < 0 and self.list.count():
+                self.list.setCurrentRow(0)
+        self._load(self.selected_id())
+
+    def _confirm_pending_changes(self):
+        if self._loaded_id is None or self._content() == self._saved_content:
+            return True
+        message = QMessageBox(self)
+        message.setWindowTitle('Cambios sin guardar')
+        message.setIcon(QMessageBox.Warning)
+        message.setText('La plantilla tiene cambios sin guardar. ¿Qué deseas hacer?')
+        save = message.addButton('Guardar', QMessageBox.AcceptRole)
+        discard = message.addButton('Descartar', QMessageBox.DestructiveRole)
+        cancel = message.addButton('Cancelar', QMessageBox.RejectRole)
+        message.setDefaultButton(cancel)
+        message.setEscapeButton(cancel)
+        message.exec()
+        if message.clickedButton() == save:
+            return self.save_current()
+        return message.clickedButton() == discard
 
     def load_selected(self):
-        tid=self.selected_id(); t=self.db.get_template(tid) if tid else None
-        if t:
-            self.name.setText(t["name"]); self.body.setPlainText(t["body"])
+        target = self.selected_id()
+        if target is None or target == self._loaded_id:
+            return
+        # Restore selection before prompting: Save must address the draft's ID,
+        # and Cancel must restore the selection as well as retain the text.
+        if self._loaded_id is not None:
+            self._select(self._loaded_id)
+        if self._confirm_pending_changes():
+            self._select(target)
+            self._load(target)
+        # Keyboard navigation may finish updating selection after this signal
+        # returns. Reconcile the highlight once that Qt input event has ended.
+        QTimer.singleShot(0, self._restore_selection)
+
+    def _restore_selection(self):
+        self._select(self._loaded_id)
+
+    def done(self, result):
+        # Covers Cerrar, accept(), reject() and Escape.
+        if self._confirm_pending_changes():
+            super().done(result)
+
+    def closeEvent(self, event):
+        if self._confirm_pending_changes():
+            super().done(QDialog.Rejected)
+            event.accept()
+        else:
+            event.ignore()
 
     def new_template(self):
-        base="Nueva plantilla"; existing={t["name"].lower() for t in self.db.list_templates()}; name=base; n=2
-        while name.lower() in existing: name=f"{base} {n}"; n+=1
-        tid=self.db.create_template(name,DEFAULT_TEMPLATE); self.refresh(tid); self.name.selectAll(); self.name.setFocus()
+        if not self._confirm_pending_changes():
+            return
+        base = 'Nueva plantilla'
+        existing = {t['name'].lower() for t in self.db.list_templates()}
+        name, number = base, 2
+        while name.lower() in existing:
+            name = f'{base} {number}'
+            number += 1
+        try:
+            template_id = self.db.create_template(name, DEFAULT_TEMPLATE)
+        except Exception as exc:
+            QMessageBox.warning(self, 'No se pudo crear', str(exc))
+            return
+        self.refresh(template_id)
+        self.name.selectAll()
+        self.name.setFocus()
 
     def duplicate_template(self):
-        tid=self.selected_id(); t=self.db.get_template(tid) if tid else None
-        if not t: return
-        base=t["name"]+" copia"; existing={x["name"].lower() for x in self.db.list_templates()}; name=base; n=2
-        while name.lower() in existing: name=f"{base} {n}"; n+=1
-        new_id=self.db.create_template(name,t["body"]); self.refresh(new_id)
+        if not self._confirm_pending_changes():
+            return
+        template = self.db.get_template(self._loaded_id)
+        if not template:
+            return
+        base = template['name'] + ' copia'
+        existing = {t['name'].lower() for t in self.db.list_templates()}
+        name, number = base, 2
+        while name.lower() in existing:
+            name = f'{base} {number}'
+            number += 1
+        try:
+            template_id = self.db.create_template(name, template['body'])
+        except Exception as exc:
+            QMessageBox.warning(self, 'No se pudo duplicar', str(exc))
+            return
+        self.refresh(template_id)
 
     def delete_template(self):
-        tid=self.selected_id()
-        if not tid: return
-        if QMessageBox.question(self,"Eliminar plantilla","¿Eliminar esta plantilla?")!=QMessageBox.Yes: return
-        try: self.db.delete_template(tid); self.refresh()
-        except Exception as exc: QMessageBox.warning(self,"No se pudo eliminar",str(exc))
+        if not self._loaded_id or not self._confirm_pending_changes():
+            return
+        if QMessageBox.question(self, 'Eliminar plantilla', '¿Eliminar esta plantilla?') != QMessageBox.Yes:
+            return
+        try:
+            self.db.delete_template(self._loaded_id)
+        except Exception as exc:
+            QMessageBox.warning(self, 'No se pudo eliminar', str(exc))
+            return
+        self.refresh()
 
     def save_current(self):
-        tid=self.selected_id()
-        if not tid: return
+        if not self._loaded_id:
+            return False
         try:
-            self.db.update_template(tid,self.name.text(),normalize_newlines(self.body.toPlainText())); self.refresh(tid)
-        except Exception as exc: QMessageBox.warning(self,"No se pudo guardar",str(exc))
+            self.db.update_template(self._loaded_id, *self._content())
+        except Exception as exc:
+            QMessageBox.warning(self, 'No se pudo guardar', str(exc))
+            return False
+        self.refresh(self._loaded_id)
+        return True
 
     def set_default(self):
-        tid=self.selected_id()
-        if tid: self.db.set_default_template_id(tid); self.refresh(tid)
+        if not self._loaded_id:
+            return
+        try:
+            self.db.set_default_template_id(self._loaded_id)
+        except Exception as exc:
+            QMessageBox.warning(self, 'No se pudo cambiar la plantilla predeterminada', str(exc))
+            return
+        # Update only labels; changing a preference must not reload the editor.
+        names = {t['id']: t['name'] for t in self.db.list_templates()}
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            template_id = item.data(Qt.UserRole)
+            item.setText(('★ ' if template_id == self._loaded_id else '') + names[template_id])
