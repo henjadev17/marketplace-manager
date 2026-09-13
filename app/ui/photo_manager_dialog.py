@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -23,6 +23,7 @@ from app.ui.ui_helpers import set_button_role
 
 ROLE_PHOTO_ID = Qt.UserRole
 ROLE_SOURCE_PATH = Qt.UserRole + 1
+ROLE_ROTATION = Qt.UserRole + 2
 
 
 class ProductPhotosDialog(QDialog):
@@ -58,7 +59,7 @@ class ProductPhotosDialog(QDialog):
         open_folder_btn.setToolTip("Abrir las fotos guardadas del producto en el Explorador de Windows")
         open_folder_btn.clicked.connect(self.open_photo_folder)
         folder_row.addWidget(open_folder_btn)
-        folder_note = QLabel("Si cambias las fotos o su orden, guarda antes de subirlas a Marketplace.")
+        folder_note = QLabel("Si giras, agregas o reordenas fotos, guarda antes de subirlas a Marketplace.")
         folder_note.setWordWrap(True)
         folder_note.setProperty("role", "muted")
         folder_row.addWidget(folder_note, 1)
@@ -76,6 +77,14 @@ class ProductPhotosDialog(QDialog):
         self.list.itemDoubleClicked.connect(self.preview_item)
 
         layout.addWidget(self.list, 1)
+
+        rotation_buttons = QHBoxLayout()
+        for label, degrees in (("↶ Girar izquierda", -90), ("↷ Girar derecha", 90)):
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, angle=degrees: self.rotate_selected(angle))
+            rotation_buttons.addWidget(button)
+        rotation_buttons.addStretch()
+        layout.addLayout(rotation_buttons)
 
         buttons = QHBoxLayout()
 
@@ -149,6 +158,7 @@ class ProductPhotosDialog(QDialog):
         item = QListWidgetItem(label)
         item.setData(ROLE_PHOTO_ID, int(photo_id))
         item.setData(ROLE_SOURCE_PATH, str(source))
+        item.setData(ROLE_ROTATION, 0)
         item.setToolTip(str(source))
 
         try:
@@ -214,6 +224,19 @@ class ProductPhotosDialog(QDialog):
         for item in selected:
             self.list.takeItem(self.list.row(item))
 
+    def rotate_selected(self, degrees):
+        for item in self.list.selectedItems():
+            angle = (item.data(ROLE_ROTATION) + degrees) % 360
+            try:
+                thumbnail = build_thumbnail(Path(item.data(ROLE_SOURCE_PATH)))
+                pix = QPixmap(str(thumbnail))
+                if pix.isNull():
+                    raise ValueError('No se pudo leer la imagen.')
+                item.setIcon(QIcon(pix.transformed(QTransform().rotate(angle), Qt.SmoothTransformation)))
+                item.setData(ROLE_ROTATION, angle)
+            except Exception as exc:
+                QMessageBox.warning(self, 'No se pudo girar la foto', str(exc))
+
     def move_current(self, direction):
         row = self.list.currentRow()
 
@@ -233,7 +256,7 @@ class ProductPhotosDialog(QDialog):
         source = Path(item.data(ROLE_SOURCE_PATH))
 
         if source.exists():
-            ImagePreviewDialog(source, self).exec()
+            ImagePreviewDialog(source, self, rotation=item.data(ROLE_ROTATION)).exec()
 
     def save(self):
         ordered_ids = self.photo_ids()
@@ -250,6 +273,9 @@ class ProductPhotosDialog(QDialog):
             self.db.sync_product_photos(
                 self.product_id,
                 ordered_ids,
+                rotations={int(self.list.item(i).data(ROLE_PHOTO_ID)):
+                           self.list.item(i).data(ROLE_ROTATION)
+                           for i in range(self.list.count())},
             )
 
             QMessageBox.information(

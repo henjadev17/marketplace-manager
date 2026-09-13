@@ -13,6 +13,28 @@ import shutil
 import stat
 import uuid
 
+from PIL import Image, ImageOps
+
+
+def rotate_staged_photo(path, degrees):
+    """Rotate only a staged copy, normalizing camera orientation first."""
+    with Image.open(path) as source:
+        if getattr(source, 'n_frames', 1) != 1:
+            raise ValueError('No se pueden girar imágenes animadas o de varias páginas.')
+        image_format = source.format
+        image = ImageOps.exif_transpose(source).rotate(-degrees, expand=True)
+        options = {}
+        if image_format == 'JPEG':
+            options.update(quality=95, subsampling=0)
+        if image_format in ('JPEG', 'PNG', 'WEBP'):
+            options['exif'] = image.getexif().tobytes()
+            if source.info.get('icc_profile'):
+                options['icc_profile'] = source.info['icc_profile']
+    try:
+        image.save(path, format=image_format, **options)
+    finally:
+        image.close()
+
 
 class PhotoRecoveryError(RuntimeError):
     """Keep recovery evidence intact and stop writes until it can be recovered."""
@@ -84,7 +106,7 @@ class PhotoStorage:
             self._checked(operation / name).unlink(missing_ok=True)
         operation.rmdir()
 
-    def prepare(self, code, sources):
+    def prepare(self, code, sources, rotations=None):
         """sources: ordered (photo_id, source_path); return operation and filenames."""
         final = self.product_folder(code)
         self._checked(self.operations).mkdir(parents=True, exist_ok=True)
@@ -99,10 +121,14 @@ class PhotoStorage:
             destination = stage / filename
             expected = file_digest(source)
             shutil.copy2(source, destination)
-            with destination.open('r+b') as stream:
-                os.fsync(stream.fileno())
             if file_digest(destination) != expected:
                 raise OSError(f'No se pudo verificar la copia de: {source.name}')
+            degrees = (rotations or {}).get(photo_id, 0) % 360
+            if degrees:
+                rotate_staged_photo(destination, degrees)
+                expected = file_digest(destination)
+            with destination.open('r+b') as stream:
+                os.fsync(stream.fileno())
             files[filename] = expected
             staged.append((photo_id, filename))
         manifest = dict(version=1, database=self.database, code=code,
