@@ -92,6 +92,16 @@ Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
 ## Pruebas
 
+### Condición y notas internas
+
+Los formularios de creación y edición incluyen **Condición (interna)**, del 1 al
+10 (10 = como nuevo), con la opción **Sin evaluar**, y **Notas internas** para
+recordar manchas, defectos u otros detalles. Ambos campos son opcionales y se
+guardan con el producto. No se incluyen en la descripción para Marketplace ni
+en el XLSX. Los productos anteriores comienzan sin evaluar y con notas vacías.
+Las notas son internas a la aplicación, no cifradas: quien tenga acceso a la
+base de datos puede leerlas.
+
 ### Girar fotos
 
 En **Administrar fotos**, selecciona una o varias imágenes y usa **Girar izquierda**

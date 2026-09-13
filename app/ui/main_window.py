@@ -270,6 +270,16 @@ class MainWindow(QMainWindow):
             self.status_input.addItem(label, value)
         form.addRow("Estado:", self.status_input)
 
+        self.condition_input = QComboBox()
+        self.condition_input.addItem('Sin evaluar', None)
+        for rating in range(1, 11):
+            self.condition_input.addItem(f'{rating}/10' + (' — Como nuevo' if rating == 10 else ''), rating)
+        form.addRow('Condición (interna):', self.condition_input)
+        self.internal_notes_input = QPlainTextEdit()
+        self.internal_notes_input.setPlaceholderText('Solo para ti: manchas, defectos, detalles para recordar…')
+        self.internal_notes_input.setMaximumHeight(85)
+        form.addRow('Notas internas:', self.internal_notes_input)
+
         self.description_input = QPlainTextEdit()
         self.description_input.setPlaceholderText("Descripción...")
         self.description_input.setMinimumHeight(110)
@@ -563,6 +573,8 @@ class MainWindow(QMainWindow):
                 "location": self.location_input.text().strip(),
                 "status": self.status_input.currentData(),
                 "template_id": self.template_input.currentData(),
+                'condition_rating': self.condition_input.currentData(),
+                'internal_notes': self.internal_notes_input.toPlainText(),
             },
                 photo_ids,
             )
@@ -583,6 +595,8 @@ class MainWindow(QMainWindow):
         self.refresh_gallery()
 
     def reset_form(self):
+        self.condition_input.setCurrentIndex(0)
+        self.internal_notes_input.clear()
         self.title_input.clear()
         self.price_input.setValue(0)
         self.description_input.clear()
