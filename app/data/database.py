@@ -220,18 +220,31 @@ class Database:
             )
 
     def delete_template(self, template_id):
-        templates = self.list_templates()
-        if len(templates) <= 1:
-            raise ValueError("Debe existir al menos una plantilla.")
         template_id = int(template_id)
         with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            templates = con.execute(
+                "SELECT id FROM templates ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+            if template_id not in {row['id'] for row in templates}:
+                return
+            if len(templates) <= 1:
+                raise ValueError("Debe existir al menos una plantilla.")
+            fallback = next(row['id'] for row in templates if row['id'] != template_id)
+            con.execute(
+                "UPDATE products SET template_id = NULL WHERE template_id = ?",
+                (template_id,),
+            )
             con.execute("DELETE FROM templates WHERE id = ?", (template_id,))
-        remaining = self.list_templates()
-        fallback = remaining[0]["id"]
-        if self.get_default_template_id() == template_id:
-            self.set_default_template_id(fallback)
-        if self.get_last_template_id() == template_id:
-            self.set_last_template_id(fallback)
+            for key in ('default_template_id', 'last_template_id'):
+                row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                try:
+                    references_deleted = row is not None and int(row['value']) == template_id
+                except (TypeError, ValueError):
+                    references_deleted = False
+                if references_deleted:
+                    con.execute("UPDATE settings SET value = ? WHERE key = ?",
+                                (str(fallback), key))
 
     def get_default_template_id(self):
         value = self.get_setting("default_template_id", "")

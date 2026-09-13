@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Delete templates and clear their product/settings references atomically, preserving saved product descriptions and protecting the last template.
+- Select the default template when editing a product with a legacy missing template reference.
+
 - Reserve product codes with a persistent SQLite counter, preventing reuse after deletion or failed creation and coordinating concurrent creates.
 - Skip existing media files and folders without overwriting or removing them.
 
