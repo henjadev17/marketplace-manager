@@ -77,6 +77,12 @@ Los datos se guardan **fuera del repositorio**:
 
 La implementación utiliza `Path.home() / "Documents" / "MarketplaceManager"`.
 Las fotos seleccionadas se copian a `media/PROD-XXXX/PROD-XXXX-01.ext`.
+Los códigos se reservan mediante un contador persistente en SQLite. No se reutilizan
+al eliminar productos; un fallo después de reservar puede dejar un salto. La vista
+previa del código no lo reserva y puede cambiar si otra ventana crea un producto.
+Las carpetas o archivos existentes se conservan y su número se salta. Al actualizar,
+el contador parte del mayor código existente: no puede reconstruir códigos que
+se eliminaron antes de esta mejora. Los productos y fotos existentes no se renombran.
 Eliminar un producto elimina sus copias administradas; las fotos originales
 externas se conservan. No usar la carpeta de copias administradas como fuente de originales.
 
@@ -172,8 +178,6 @@ mantiene 0.9.2 y no crea una nueva publicación.
 - SQLite y los archivos siguen siendo sistemas separados; el guardado de fotos
   existentes ahora utiliza un registro recuperable. La creación y eliminación
   de productos podrían recibir una protección equivalente en una tarea futura.
-- Los códigos usan MAX + 1, pueden reutilizarse tras borrar el último producto
-  y no coordinan creaciones concurrentes.
 - `products.template_id` no tiene clave foránea; borrar plantillas puede dejar
   referencias antiguas, aunque la interfaz dispone de valores alternativos.
 - El diálogo heredado `template_dialog.py` llama a `save_template_settings`, que

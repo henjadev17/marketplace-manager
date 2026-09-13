@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import sqlite3
 from contextlib import contextmanager
@@ -72,6 +73,11 @@ CREATE INDEX IF NOT EXISTS idx_product_photos_photo ON product_photos(photo_id);
 CREATE TABLE IF NOT EXISTS photo_file_commits (
     operation_id TEXT PRIMARY KEY
 );
+
+CREATE TABLE IF NOT EXISTS product_code_sequence (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_value INTEGER NOT NULL CHECK (next_value > 0)
+);
 '''
 
 
@@ -97,6 +103,11 @@ class Database:
             con.close()
 
     def _migrate(self, con):
+        con.execute('''
+            INSERT OR IGNORE INTO product_code_sequence(id, next_value)
+            SELECT 1, COALESCE(MAX(CAST(SUBSTR(code, 6) AS INTEGER)), 0) + 1
+            FROM products WHERE code LIKE 'PROD-%'
+        ''')
         product_columns = {
             row["name"]
             for row in con.execute("PRAGMA table_info(products)").fetchall()
@@ -349,15 +360,32 @@ class Database:
         return result
 
     def next_product_code(self):
+        """Preview the next available code without reserving it."""
         with self.connection() as con:
-            row = con.execute(
-                '''
-                SELECT COALESCE(MAX(CAST(SUBSTR(code, 6) AS INTEGER)), 0) + 1 AS n
-                FROM products
-                WHERE code LIKE 'PROD-%'
-                '''
-            ).fetchone()
-            return f"PROD-{int(row['n']):04d}"
+            return f"PROD-{self._next_product_number(con):04d}"
+
+    def _next_product_number(self, con):
+        row = con.execute('''
+            SELECT MAX(
+                (SELECT next_value FROM product_code_sequence WHERE id = 1),
+                COALESCE(MAX(CAST(SUBSTR(code, 6) AS INTEGER)), 0) + 1
+            ) AS n FROM products WHERE code LIKE 'PROD-%'
+        ''').fetchone()
+        number = int(row['n'])
+        while os.path.lexists(MEDIA_DIR / f"PROD-{number:04d}"):
+            number += 1
+        return number
+
+    def _reserve_product_code(self):
+        # Commit the reservation before filesystem work; failed creates leave gaps.
+        with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            number = self._next_product_number(con)
+            con.execute(
+                "UPDATE product_code_sequence SET next_value = ? WHERE id = 1",
+                (number + 1,),
+            )
+        return f"PROD-{number:04d}"
 
     def _photo_rows_by_ids(self, con, photo_ids):
         placeholders = ",".join("?" for _ in photo_ids)
@@ -373,9 +401,15 @@ class Database:
         with self.connection() as con:
             for photo in self._photo_rows_by_ids(con, photo_ids):
                 validate_original(photo["original_path"], MEDIA_DIR)
-        code = self.next_product_code()
-        product_dir = MEDIA_DIR / code
-        product_dir.mkdir(parents=True, exist_ok=True)
+        while True:
+            code = self._reserve_product_code()
+            product_dir = MEDIA_DIR / code
+            try:
+                product_dir.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                # Another process may have created the folder after reservation.
+                continue
+            break
         copied_files = []
 
         try:
