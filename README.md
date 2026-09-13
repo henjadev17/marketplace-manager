@@ -178,8 +178,10 @@ mantiene 0.9.2 y no crea una nueva publicación.
 - SQLite y los archivos siguen siendo sistemas separados; el guardado de fotos
   existentes ahora utiliza un registro recuperable. La creación y eliminación
   de productos podrían recibir una protección equivalente en una tarea futura.
-- `products.template_id` no tiene clave foránea; borrar plantillas puede dejar
-  referencias antiguas, aunque la interfaz dispone de valores alternativos.
+- `products.template_id` no tiene clave foránea. El borrado desde la aplicación
+  limpia sus referencias en una transacción y conserva las descripciones guardadas.
+  Las referencias antiguas o externas inexistentes usan la plantilla predeterminada
+  al abrir el editor; una restricción de esquema queda pendiente.
 - El diálogo heredado `template_dialog.py` llama a `save_template_settings`, que
   ya no existe; la ventana principal utiliza `TemplateManagerDialog`.
 

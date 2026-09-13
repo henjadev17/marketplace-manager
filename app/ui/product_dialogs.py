@@ -54,6 +54,8 @@ class ProductEditDialog(QDialog):
         for template in self.db.list_templates():
             self.template.addItem(template["name"], template["id"])
         selected_template_id = product.get("template_id") or self.db.get_default_template_id()
+        if self.template.findData(selected_template_id) < 0:
+            selected_template_id = self.db.get_default_template_id()
         self.template.setCurrentIndex(max(self.template.findData(selected_template_id), 0))
         form.addRow("Plantilla:", self.template)
 
