@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QWidget,
     QTableWidget,
     QTableWidgetItem,
     QPlainTextEdit,
@@ -54,6 +56,8 @@ class ProductEditDialog(QDialog):
         for template in self.db.list_templates():
             self.template.addItem(template["name"], template["id"])
         selected_template_id = product.get("template_id") or self.db.get_default_template_id()
+        if self.template.findData(selected_template_id) < 0:
+            selected_template_id = self.db.get_default_template_id()
         self.template.setCurrentIndex(max(self.template.findData(selected_template_id), 0))
         form.addRow("Plantilla:", self.template)
 
@@ -78,6 +82,18 @@ class ProductEditDialog(QDialog):
             self.status.addItem(label, value)
         self.status.setCurrentIndex(max(self.status.findData(product["status"]), 0))
         form.addRow("Estado:", self.status)
+
+        self.condition = QComboBox()
+        self.condition.addItem('Sin evaluar', None)
+        for rating in range(1, 11):
+            self.condition.addItem(f'{rating}/10' + (' — Como nuevo' if rating == 10 else ''), rating)
+        self.condition.setCurrentIndex(max(self.condition.findData(product.get('condition_rating')), 0))
+        form.addRow('Condición (interna):', self.condition)
+        self.internal_notes = QPlainTextEdit()
+        self.internal_notes.setPlainText(product.get('internal_notes', ''))
+        self.internal_notes.setPlaceholderText('Solo para ti: manchas, defectos, detalles para recordar…')
+        self.internal_notes.setMaximumHeight(85)
+        form.addRow('Notas internas:', self.internal_notes)
 
         self.description = QPlainTextEdit()
         self.description.setPlainText(product["description"])
@@ -105,7 +121,12 @@ class ProductEditDialog(QDialog):
         photo_row.addWidget(manage_photos_btn)
 
         form.addRow("Fotos:", photo_row)
-        layout.addLayout(form)
+        form_widget = QWidget()
+        form_widget.setLayout(form)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(form_widget)
+        layout.addWidget(scroll, 1)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -163,6 +184,8 @@ class ProductEditDialog(QDialog):
                 "description": self.description.toPlainText(),
                 "final_description": self.final_description.toPlainText(),
                 "template_id": self.template.currentData(),
+                'condition_rating': self.condition.currentData(),
+                'internal_notes': self.internal_notes.toPlainText(),
             },
         )
         self.accept()

@@ -92,6 +92,30 @@ Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
 ## Pruebas
 
+### Condición y notas internas
+
+Los formularios de creación y edición incluyen **Condición (interna)**, del 1 al
+10 (10 = como nuevo), con la opción **Sin evaluar**, y **Notas internas** para
+recordar manchas, defectos u otros detalles. Ambos campos son opcionales y se
+guardan con el producto. No se incluyen en la descripción para Marketplace ni
+en el XLSX. Los productos anteriores comienzan sin evaluar y con notas vacías.
+Las notas son internas a la aplicación, no cifradas: quien tenga acceso a la
+base de datos puede leerlas.
+
+### Girar fotos
+
+En **Administrar fotos**, selecciona una o varias imágenes y usa **Girar izquierda**
+o **Girar derecha**. Cada clic gira 90°. La miniatura y el doble clic muestran el
+resultado pendiente. **Guardar orden y fotos** aplica los giros a las copias del
+producto; **Cancelar** los descarta. Los originales permanecen intactos.
+
+Los giros respetan la orientación EXIF de cámaras y celulares y se conservan al
+reordenar. Guarda antes de abrir la carpeta para subir las fotos a Marketplace.
+Las imágenes JPEG se vuelven a comprimir al guardar un giro; reordenarlas sin girar
+no las vuelve a comprimir. No se admite girar imágenes animadas.
+Incluye `media` en tus respaldos: si borras una copia guardada, recuperarla desde
+el original no puede reconstruir los giros aplicados a esa copia.
+
 ### Cambios pendientes en plantillas
 
 Al modificar el nombre o contenido de una plantilla, cambiar a otra o cerrar el
@@ -178,8 +202,10 @@ mantiene 0.9.2 y no crea una nueva publicación.
 - SQLite y los archivos siguen siendo sistemas separados; el guardado de fotos
   existentes ahora utiliza un registro recuperable. La creación y eliminación
   de productos podrían recibir una protección equivalente en una tarea futura.
-- `products.template_id` no tiene clave foránea; borrar plantillas puede dejar
-  referencias antiguas, aunque la interfaz dispone de valores alternativos.
+- `products.template_id` no tiene clave foránea. El borrado desde la aplicación
+  limpia sus referencias en una transacción y conserva las descripciones guardadas.
+  Las referencias antiguas o externas inexistentes usan la plantilla predeterminada
+  al abrir el editor; una restricción de esquema queda pendiente.
 - El diálogo heredado `template_dialog.py` llama a `save_template_settings`, que
   ya no existe; la ventana principal utiliza `TemplateManagerDialog`.
 

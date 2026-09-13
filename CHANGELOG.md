@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add optional internal condition ratings (1–10) and multiline notes to product creation and editing, preserving existing products during migration.
+- Exclude internal condition and notes from public descriptions and XLSX exports; allow scrolling the expanded product editor.
+
+- Rotate selected product photos left/right with pending thumbnail and full-size previews; save only managed copies through the recoverable photo journal.
+- Preserve saved photo edits when reordering and normalize EXIF orientation when rotating.
+
+- Delete templates and clear their product/settings references atomically, preserving saved product descriptions and protecting the last template.
+- Select the default template when editing a product with a legacy missing template reference.
+
 - Reserve product codes with a persistent SQLite counter, preventing reuse after deletion or failed creation and coordinating concurrent creates.
 - Skip existing media files and folders without overwriting or removing them.
 

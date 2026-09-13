@@ -122,6 +122,12 @@ class Database:
                 "ALTER TABLE products "
                 "ADD COLUMN template_id INTEGER"
             )
+        if 'condition_rating' not in product_columns:
+            con.execute('ALTER TABLE products ADD COLUMN condition_rating INTEGER '
+                        'CHECK (condition_rating IS NULL OR '
+                        '(typeof(condition_rating) = \'integer\' AND condition_rating BETWEEN 1 AND 10))')
+        if 'internal_notes' not in product_columns:
+            con.execute("ALTER TABLE products ADD COLUMN internal_notes TEXT NOT NULL DEFAULT ''")
 
         pp_columns = {
             row["name"]
@@ -220,18 +226,31 @@ class Database:
             )
 
     def delete_template(self, template_id):
-        templates = self.list_templates()
-        if len(templates) <= 1:
-            raise ValueError("Debe existir al menos una plantilla.")
         template_id = int(template_id)
         with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            templates = con.execute(
+                "SELECT id FROM templates ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+            if template_id not in {row['id'] for row in templates}:
+                return
+            if len(templates) <= 1:
+                raise ValueError("Debe existir al menos una plantilla.")
+            fallback = next(row['id'] for row in templates if row['id'] != template_id)
+            con.execute(
+                "UPDATE products SET template_id = NULL WHERE template_id = ?",
+                (template_id,),
+            )
             con.execute("DELETE FROM templates WHERE id = ?", (template_id,))
-        remaining = self.list_templates()
-        fallback = remaining[0]["id"]
-        if self.get_default_template_id() == template_id:
-            self.set_default_template_id(fallback)
-        if self.get_last_template_id() == template_id:
-            self.set_last_template_id(fallback)
+            for key in ('default_template_id', 'last_template_id'):
+                row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                try:
+                    references_deleted = row is not None and int(row['value']) == template_id
+                except (TypeError, ValueError):
+                    references_deleted = False
+                if references_deleted:
+                    con.execute("UPDATE settings SET value = ? WHERE key = ?",
+                                (str(fallback), key))
 
     def get_default_template_id(self):
         value = self.get_setting("default_template_id", "")
@@ -397,6 +416,7 @@ class Database:
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def create_product(self, data, photo_ids):
+        self._validate_internal_details(data)
         # Validate even legacy photo records before creating any managed files.
         with self.connection() as con:
             for photo in self._photo_rows_by_ids(con, photo_ids):
@@ -432,9 +452,9 @@ class Database:
                     '''
                     INSERT INTO products(
                         code, title, price, description, final_description,
-                        category, location, status, template_id
+                        category, location, status, template_id, condition_rating, internal_notes
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''',
                     (
                         code,
@@ -446,6 +466,8 @@ class Database:
                         data.get("location", ""),
                         data.get("status", "DRAFT"),
                         data.get("template_id"),
+                        data.get('condition_rating'),
+                        data.get('internal_notes', ''),
                     ),
                 )
                 product_id = cur.lastrowid
@@ -517,12 +539,16 @@ class Database:
             con.execute("BEGIN IMMEDIATE")
             PhotoStorage(MEDIA_DIR, self.db_path).recover(con)
 
-    def sync_product_photos(self, product_id, ordered_photo_ids):
+    def sync_product_photos(self, product_id, ordered_photo_ids, rotations=None):
         """Save ordered photo copies, retaining the previous folder until commit."""
         if not ordered_photo_ids:
             raise ValueError("El producto debe conservar al menos una foto.")
         if len(set(ordered_photo_ids)) != len(ordered_photo_ids):
             raise ValueError("Una foto no puede repetirse en el mismo producto.")
+        rotations = dict(rotations or {})
+        if any(photo_id not in ordered_photo_ids or type(degrees) is not int or degrees % 90
+               for photo_id, degrees in rotations.items()):
+            raise ValueError("Los giros deben ser múltiplos de 90° para las fotos seleccionadas.")
 
         storage = PhotoStorage(MEDIA_DIR, self.db_path)
         try:
@@ -545,22 +571,20 @@ class Database:
                 sources = []
                 for row in rows:
                     source = Path(row["original_path"])
-                    if is_managed_source(source, MEDIA_DIR) or not source.is_file():
-                        # Existing photos may fall back only to this product's own
-                        # saved copy, never to another product's managed files.
-                        previous = old.get(row["id"])
-                        if previous:
-                            saved = Path(previous).resolve()
-                            if saved.parent == final.resolve() and saved.is_file():
-                                source = saved
-                            else:
-                                validate_original(source, MEDIA_DIR)
-                                raise FileNotFoundError(f"No se encontró una copia propia de: {row['filename']}")
-                        else:
-                            validate_original(source, MEDIA_DIR)
-                            raise FileNotFoundError(f"No existe la imagen original: {source}")
+                    previous = old.get(row["id"])
+                    if previous:
+                        saved = Path(previous).resolve()
+                        if saved.parent != final.resolve():
+                            raise PhotoRecoveryError('La copia guardada no pertenece a este producto.')
+                        # Keep saved edits when reordering or rotating again.
+                        if saved.is_file():
+                            sources.append((row['id'], saved))
+                            continue
+                    validate_original(source, MEDIA_DIR)
+                    if not source.is_file():
+                        raise FileNotFoundError(f"No existe la imagen original: {source}")
                     sources.append((row["id"], source))
-                operation, staged = storage.prepare(code, sources)
+                operation, staged = storage.prepare(code, sources, rotations=rotations)
                 storage.install(operation, code)
                 con.execute("DELETE FROM product_photos WHERE product_id = ?", (product_id,))
                 for position, (photo_id, filename) in enumerate(staged, 1):
@@ -649,13 +673,24 @@ class Database:
                 "photos": [dict(r) for r in photos],
             }
 
+    @staticmethod
+    def _validate_internal_details(data):
+        rating = data.get('condition_rating')
+        if rating is not None and (type(rating) is not int or not 1 <= rating <= 10):
+            raise ValueError('La condición debe ser un número entero del 1 al 10 o Sin evaluar.')
+        if not isinstance(data.get('internal_notes', ''), str):
+            raise ValueError('Las notas internas deben ser texto.')
+
     def update_product(self, product_id, data):
+        self._validate_internal_details(data)
         with self.connection() as con:
             con.execute(
                 '''
                 UPDATE products SET
                     title = ?, price = ?, description = ?, final_description = ?,
                     category = ?, location = ?, status = ?, template_id = ?,
+                    condition_rating = CASE WHEN ? THEN ? ELSE condition_rating END,
+                    internal_notes = CASE WHEN ? THEN ? ELSE internal_notes END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 ''',
@@ -668,6 +703,8 @@ class Database:
                     data.get("location", ""),
                     data.get("status", "DRAFT"),
                     data.get("template_id"),
+                    'condition_rating' in data, data.get('condition_rating'),
+                    'internal_notes' in data, data.get('internal_notes', ''),
                     product_id,
                 ),
             )
@@ -690,6 +727,8 @@ class Database:
         for product in reversed(self.list_products()):
             full = self.get_product(product["id"])
             row = dict(product)
+            row.pop('condition_rating', None)
+            row.pop('internal_notes', None)
             row["photos"] = [
                 p["copied_path"] or p["original_path"]
                 for p in full["photos"]
