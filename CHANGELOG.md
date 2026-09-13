@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reserve product codes with a persistent SQLite counter, preventing reuse after deletion or failed creation and coordinating concurrent creates.
+- Skip existing media files and folders without overwriting or removing them.
+
 - Preserve intentionally empty delivery, payment and contact defaults after restart; import legacy values only when initializing missing defaults.
 
 - Protect unsaved template edits with Save/Discard/Cancel when switching templates or leaving the editor; retain drafts after failed saves.
