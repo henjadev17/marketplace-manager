@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rotate selected product photos left/right with pending thumbnail and full-size previews; save only managed copies through the recoverable photo journal.
+- Preserve saved photo edits when reordering and normalize EXIF orientation when rotating.
+
 - Delete templates and clear their product/settings references atomically, preserving saved product descriptions and protecting the last template.
 - Select the default template when editing a product with a legacy missing template reference.
 

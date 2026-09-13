@@ -530,12 +530,16 @@ class Database:
             con.execute("BEGIN IMMEDIATE")
             PhotoStorage(MEDIA_DIR, self.db_path).recover(con)
 
-    def sync_product_photos(self, product_id, ordered_photo_ids):
+    def sync_product_photos(self, product_id, ordered_photo_ids, rotations=None):
         """Save ordered photo copies, retaining the previous folder until commit."""
         if not ordered_photo_ids:
             raise ValueError("El producto debe conservar al menos una foto.")
         if len(set(ordered_photo_ids)) != len(ordered_photo_ids):
             raise ValueError("Una foto no puede repetirse en el mismo producto.")
+        rotations = dict(rotations or {})
+        if any(photo_id not in ordered_photo_ids or type(degrees) is not int or degrees % 90
+               for photo_id, degrees in rotations.items()):
+            raise ValueError("Los giros deben ser múltiplos de 90° para las fotos seleccionadas.")
 
         storage = PhotoStorage(MEDIA_DIR, self.db_path)
         try:
@@ -558,22 +562,20 @@ class Database:
                 sources = []
                 for row in rows:
                     source = Path(row["original_path"])
-                    if is_managed_source(source, MEDIA_DIR) or not source.is_file():
-                        # Existing photos may fall back only to this product's own
-                        # saved copy, never to another product's managed files.
-                        previous = old.get(row["id"])
-                        if previous:
-                            saved = Path(previous).resolve()
-                            if saved.parent == final.resolve() and saved.is_file():
-                                source = saved
-                            else:
-                                validate_original(source, MEDIA_DIR)
-                                raise FileNotFoundError(f"No se encontró una copia propia de: {row['filename']}")
-                        else:
-                            validate_original(source, MEDIA_DIR)
-                            raise FileNotFoundError(f"No existe la imagen original: {source}")
+                    previous = old.get(row["id"])
+                    if previous:
+                        saved = Path(previous).resolve()
+                        if saved.parent != final.resolve():
+                            raise PhotoRecoveryError('La copia guardada no pertenece a este producto.')
+                        # Keep saved edits when reordering or rotating again.
+                        if saved.is_file():
+                            sources.append((row['id'], saved))
+                            continue
+                    validate_original(source, MEDIA_DIR)
+                    if not source.is_file():
+                        raise FileNotFoundError(f"No existe la imagen original: {source}")
                     sources.append((row["id"], source))
-                operation, staged = storage.prepare(code, sources)
+                operation, staged = storage.prepare(code, sources, rotations=rotations)
                 storage.install(operation, code)
                 con.execute("DELETE FROM product_photos WHERE product_id = ?", (product_id,))
                 for position, (photo_id, filename) in enumerate(staged, 1):

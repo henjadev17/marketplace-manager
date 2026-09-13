@@ -92,6 +92,20 @@ Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
 ## Pruebas
 
+### Girar fotos
+
+En **Administrar fotos**, selecciona una o varias imágenes y usa **Girar izquierda**
+o **Girar derecha**. Cada clic gira 90°. La miniatura y el doble clic muestran el
+resultado pendiente. **Guardar orden y fotos** aplica los giros a las copias del
+producto; **Cancelar** los descarta. Los originales permanecen intactos.
+
+Los giros respetan la orientación EXIF de cámaras y celulares y se conservan al
+reordenar. Guarda antes de abrir la carpeta para subir las fotos a Marketplace.
+Las imágenes JPEG se vuelven a comprimir al guardar un giro; reordenarlas sin girar
+no las vuelve a comprimir. No se admite girar imágenes animadas.
+Incluye `media` en tus respaldos: si borras una copia guardada, recuperarla desde
+el original no puede reconstruir los giros aplicados a esa copia.
+
 ### Cambios pendientes en plantillas
 
 Al modificar el nombre o contenido de una plantilla, cambiar a otra o cerrar el
