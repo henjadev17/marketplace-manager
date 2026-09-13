@@ -122,6 +122,12 @@ class Database:
                 "ALTER TABLE products "
                 "ADD COLUMN template_id INTEGER"
             )
+        if 'condition_rating' not in product_columns:
+            con.execute('ALTER TABLE products ADD COLUMN condition_rating INTEGER '
+                        'CHECK (condition_rating IS NULL OR '
+                        '(typeof(condition_rating) = \'integer\' AND condition_rating BETWEEN 1 AND 10))')
+        if 'internal_notes' not in product_columns:
+            con.execute("ALTER TABLE products ADD COLUMN internal_notes TEXT NOT NULL DEFAULT ''")
 
         pp_columns = {
             row["name"]
@@ -410,6 +416,7 @@ class Database:
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def create_product(self, data, photo_ids):
+        self._validate_internal_details(data)
         # Validate even legacy photo records before creating any managed files.
         with self.connection() as con:
             for photo in self._photo_rows_by_ids(con, photo_ids):
@@ -445,9 +452,9 @@ class Database:
                     '''
                     INSERT INTO products(
                         code, title, price, description, final_description,
-                        category, location, status, template_id
+                        category, location, status, template_id, condition_rating, internal_notes
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''',
                     (
                         code,
@@ -459,6 +466,8 @@ class Database:
                         data.get("location", ""),
                         data.get("status", "DRAFT"),
                         data.get("template_id"),
+                        data.get('condition_rating'),
+                        data.get('internal_notes', ''),
                     ),
                 )
                 product_id = cur.lastrowid
@@ -664,13 +673,24 @@ class Database:
                 "photos": [dict(r) for r in photos],
             }
 
+    @staticmethod
+    def _validate_internal_details(data):
+        rating = data.get('condition_rating')
+        if rating is not None and (type(rating) is not int or not 1 <= rating <= 10):
+            raise ValueError('La condición debe ser un número entero del 1 al 10 o Sin evaluar.')
+        if not isinstance(data.get('internal_notes', ''), str):
+            raise ValueError('Las notas internas deben ser texto.')
+
     def update_product(self, product_id, data):
+        self._validate_internal_details(data)
         with self.connection() as con:
             con.execute(
                 '''
                 UPDATE products SET
                     title = ?, price = ?, description = ?, final_description = ?,
                     category = ?, location = ?, status = ?, template_id = ?,
+                    condition_rating = CASE WHEN ? THEN ? ELSE condition_rating END,
+                    internal_notes = CASE WHEN ? THEN ? ELSE internal_notes END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 ''',
@@ -683,6 +703,8 @@ class Database:
                     data.get("location", ""),
                     data.get("status", "DRAFT"),
                     data.get("template_id"),
+                    'condition_rating' in data, data.get('condition_rating'),
+                    'internal_notes' in data, data.get('internal_notes', ''),
                     product_id,
                 ),
             )
@@ -705,6 +727,8 @@ class Database:
         for product in reversed(self.list_products()):
             full = self.get_product(product["id"])
             row = dict(product)
+            row.pop('condition_rating', None)
+            row.pop('internal_notes', None)
             row["photos"] = [
                 p["copied_path"] or p["original_path"]
                 for p in full["photos"]
