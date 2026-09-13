@@ -131,9 +131,11 @@ class Database:
             "default_location": "",
             "default_category": "",
             "default_status": "DRAFT",
-            "default_delivery_method": "",
-            "default_payment_method": "",
-            "default_contact_number": "",
+            # Legacy values seed missing settings only. An existing empty value
+            # is intentional and must survive subsequent application starts.
+            "default_delivery_method": self.get_setting("delivery_method", ""),
+            "default_payment_method": self.get_setting("payment_method", ""),
+            "default_contact_number": self.get_setting("contact_number", ""),
             "default_template_id": "",
             "last_template_id": "",
         }
@@ -148,13 +150,6 @@ class Database:
             )
             self.set_setting("default_template_id", template_id)
             self.set_setting("last_template_id", template_id)
-
-        if not self.get_setting("default_delivery_method", ""):
-            self.set_setting("default_delivery_method", self.get_setting("delivery_method", ""))
-        if not self.get_setting("default_payment_method", ""):
-            self.set_setting("default_payment_method", self.get_setting("payment_method", ""))
-        if not self.get_setting("default_contact_number", ""):
-            self.set_setting("default_contact_number", self.get_setting("contact_number", ""))
 
     def get_setting(self, key, default=None):
         with self.connection() as con:

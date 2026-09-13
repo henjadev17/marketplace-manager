@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve intentionally empty delivery, payment and contact defaults after restart; import legacy values only when initializing missing defaults.
+
 - Protect unsaved template edits with Save/Discard/Cancel when switching templates or leaving the editor; retain drafts after failed saves.
 - Preserve template drafts when changing the default template and protect reloads triggered by toolbar actions.
 
