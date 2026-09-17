@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.config import IMAGE_EXTENSIONS, MEDIA_DIR
+from app.config import IMAGE_EXTENSIONS
 from app.services.thumbnail_service import build_thumbnail
 from app.ui.preview_dialog import ImagePreviewDialog
 from app.ui.ui_helpers import set_button_role
@@ -121,7 +121,7 @@ class ProductPhotosDialog(QDialog):
         self.load_existing(full["photos"])
 
     def open_photo_folder(self):
-        folder = MEDIA_DIR / self.product["code"]
+        folder = self.db.photo_storage.product_folder(self.product["code"])
         if not folder.is_dir():
             QMessageBox.warning(
                 self,
@@ -162,7 +162,7 @@ class ProductPhotosDialog(QDialog):
         item.setToolTip(str(source))
 
         try:
-            thumb_path = build_thumbnail(source)
+            thumb_path = build_thumbnail(source, self.db.paths.thumbnail_dir)
             pix = QPixmap(str(thumb_path))
 
             if not pix.isNull():
@@ -228,7 +228,7 @@ class ProductPhotosDialog(QDialog):
         for item in self.list.selectedItems():
             angle = (item.data(ROLE_ROTATION) + degrees) % 360
             try:
-                thumbnail = build_thumbnail(Path(item.data(ROLE_SOURCE_PATH)))
+                thumbnail = build_thumbnail(Path(item.data(ROLE_SOURCE_PATH)), self.db.paths.thumbnail_dir)
                 pix = QPixmap(str(thumbnail))
                 if pix.isNull():
                     raise ValueError('No se pudo leer la imagen.')

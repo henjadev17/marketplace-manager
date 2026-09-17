@@ -6,7 +6,7 @@ import pytest
 
 
 def pytest_sessionstart(session):
-    # app.config binds paths at import time, as does Database's default argument.
+    # Protect imports and legacy default paths before test collection.
     session._test_home = tempfile.TemporaryDirectory(prefix="marketplace-tests-")
     session._home_patch = pytest.MonkeyPatch()
     home = Path(session._test_home.name)
@@ -23,7 +23,6 @@ def pytest_sessionfinish(session, exitstatus):
 @pytest.fixture(autouse=True)
 def isolated_storage(tmp_path, monkeypatch):
     from app import config
-    from app.data import database
 
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
@@ -39,9 +38,6 @@ def isolated_storage(tmp_path, monkeypatch):
     }
     for name, path in paths.items():
         monkeypatch.setattr(config, name, path)
-    monkeypatch.setattr(database, "DB_PATH", paths["DB_PATH"])
-    monkeypatch.setattr(database, "MEDIA_DIR", paths["MEDIA_DIR"])
-    monkeypatch.setattr(database.Database.__init__, "__defaults__", (paths["DB_PATH"],))
     return root
 
 

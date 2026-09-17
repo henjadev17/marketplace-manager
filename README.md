@@ -8,7 +8,7 @@ predeterminados, fotos, cuadrícula Publicar/Copiar y exportación XLSX.
 ## Arquitectura
 
 - `app/main.py`: entrada de Qt; ejecutar con `python -m app.main`.
-- `app/config.py`: rutas de datos, extensiones de imagen y plantilla inicial.
+- `app/config.py`: `DataPaths` por base, rutas predeterminadas, extensiones de imagen y plantilla inicial.
 - `app/data/database.py`: SQLite, migraciones aditivas, configuración, plantillas,
   productos y copia/renombrado de fotos administradas.
 - `app/services/`: plantillas, XLSX con openpyxl y miniaturas con Pillow y tareas Qt.
@@ -110,6 +110,21 @@ Nunca agregar, mover, borrar o modificar la base de producción ni sus medios du
 limpieza del repositorio. Setup, pruebas y build no operan sobre esa carpeta.
 Ejecutar la aplicación normalmente sí utiliza los datos reales.
 
+Para desarrollo, `Database(ruta)` crea sus carpetas junto a la base indicada sin
+crear las carpetas predeterminadas de Documents. Un archivo `marketplace.db` usa
+`media/`, `cache/thumbnails/` y `exports/` en su mismo directorio. Otros nombres,
+por ejemplo `pruebas.db`, usan `pruebas.db.data/` como raíz de esas carpetas para
+aislar bases distintas incluso en el mismo directorio.
+No colocar otras bases dentro de esas carpetas de datos: una base llamada
+`marketplace.db` dentro de `pruebas.db.data/` usaría la misma raíz de almacenamiento.
+
+`db.paths` expone estas rutas y `db.photo_storage` administra las operaciones de
+fotos de esa base. `MainWindow(db=...)` permite usar la misma base en la interfaz;
+miniaturas, Explorador y exportaciones respetan sus rutas. El arranque normal
+conserva exactamente la ubicación de datos habitual. No se trasladan archivos ni
+se reescriben rutas guardadas: las bases personalizadas antiguas que apuntaban a
+medios globales requieren revisar esas referencias antes de operar sobre ellas.
+
 ## Pruebas
 
 ### Condición y notas internas
@@ -208,12 +223,13 @@ copias y renombrado, reordenamiento (incluido original ausente), eliminación se
 fallos parciales de creación, migraciones y valores iniciales.
 
 `tests/conftest.py` sustituye home antes de recolectar pruebas, porque la configuración
-fija rutas al importar módulos. Una fixture automática redirige rutas y el argumento
-predeterminado de Database a almacenamiento temporal por prueba. Las imágenes se
+fija rutas al importar módulos. Una fixture automática redirige la configuración
+predeterminada a almacenamiento temporal por prueba; Database la resuelve al crear
+cada instancia, sin modificar argumentos predeterminados de funciones. Las imágenes se
 crean con Pillow y las bases SQLite son temporales. La prueba del mensaje de inicio
 utiliza Qt en modo `offscreen`, un home temporal y un error simulado antes de abrir
-la ventana principal. Para nuevos módulos que importen rutas por
-valor, redirigir también esas referencias. CI ejecuta sintaxis y pytest en
+la ventana principal. Los servicios e interfaces deben recibir las rutas de la
+base activa, evitando nuevas referencias globales. CI ejecuta sintaxis y pytest en
 `windows-latest`; no valida diseño visual.
 
 ## Flujo Git y versiones
@@ -240,8 +256,9 @@ mantiene 0.9.2 y no crea una nueva publicación.
 
 ## Aspectos existentes para tareas futuras
 
-- Database mezcla persistencia con archivos y crea directorios globales incluso
-  al recibir una base personalizada.
+- Database utiliza rutas por instancia y un servicio de fotos propio. Aún coordina
+  SQL y operaciones de archivos; separar más lógica de escaneo y registro puede
+  abordarse gradualmente si facilita futuras funciones.
 - SQLite y los archivos siguen siendo sistemas separados; la creación, eliminación
   y actualización de fotos utilizan un registro recuperable. Esto no sustituye
   un respaldo externo frente a fallos físicos del disco.
