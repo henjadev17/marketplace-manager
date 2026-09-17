@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add one-step startup through Iniciar.cmd (Windows double click) and scripts/start.sh (Git Bash), sharing automatic environment creation and dependency installation when requirements change.
+
 - Add optional internal condition ratings (1–10) and multiline notes to product creation and editing, preserving existing products during migration.
 - Exclude internal condition and notes from public descriptions and XLSX exports; allow scrolling the expanded product editor.
 
