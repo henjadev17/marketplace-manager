@@ -169,8 +169,22 @@ asociadas pueden seguir usando sus propias copias si falta el original externo.
 
 Esta protección cubre errores de guardado y cierre abrupto del proceso; no sustituye
 un respaldo general frente a fallos físicos de disco. No cambia los códigos de
-producto ni el flujo de creación/eliminación de productos, salvo la validación de
-fuentes y la recuperación pendiente antes de eliminar.
+producto. La eliminación mantiene su flujo actual, con recuperación pendiente
+antes de eliminar.
+
+### Creación recuperable
+
+Crear un producto prepara y verifica sus fotos en un directorio temporal del
+registro de operaciones. En Windows, las instala sin reemplazar carpetas existentes
+y confirma el producto y sus fotos junto con una marca SQLite. Al reiniciar, una
+creación sin confirmar retira solo sus propias copias; una creación confirmada
+conserva el producto y completa la limpieza pendiente. Los originales no cambian.
+Un fallo puede consumir un código sin crear un producto.
+
+La preparación mantiene un bloqueo de escritura SQLite para que otra ventana no
+recupere una operación activa. Si las copias tardan demasiado, otra escritura
+puede informar que la base está ocupada y requerir un nuevo intento. Los archivos
+desconocidos o alterados se conservan para revisión en lugar de eliminarlos.
 
 ### Ejecutar la suite
 
@@ -219,9 +233,9 @@ mantiene 0.9.2 y no crea una nueva publicación.
 
 - Database mezcla persistencia con archivos y crea directorios globales incluso
   al recibir una base personalizada.
-- SQLite y los archivos siguen siendo sistemas separados; el guardado de fotos
-  existentes ahora utiliza un registro recuperable. La creación y eliminación
-  de productos podrían recibir una protección equivalente en una tarea futura.
+- SQLite y los archivos siguen siendo sistemas separados; la creación de productos
+  y el guardado de fotos utilizan un registro recuperable. Falta extender esa
+  protección a la eliminación de productos.
 - `products.template_id` no tiene clave foránea. El borrado desde la aplicación
   limpia sus referencias en una transacción y conserva las descripciones guardadas.
   Las referencias antiguas o externas inexistentes usan la plantilla predeterminada

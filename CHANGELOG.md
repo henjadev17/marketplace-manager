@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make product creation recoverable: verify staged photo copies, install without replacing existing folders, and commit product rows with a recovery marker.
+- Recover interrupted creations on restart, preserving committed products and originals; add process-exit and failure-injection regression tests.
+
 - Add one-step startup through Iniciar.cmd (Windows double click) and scripts/start.sh (Git Bash), sharing automatic environment creation and dependency installation when requirements change.
 
 - Add optional internal condition ratings (1–10) and multiline notes to product creation and editing, preserving existing products during migration.

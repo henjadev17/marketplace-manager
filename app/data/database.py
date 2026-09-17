@@ -13,7 +13,7 @@ from app.config import (
     ensure_app_dirs,
 )
 from app.services.photo_storage import (
-    PhotoRecoveryError, PhotoStorage, is_managed_source, validate_original,
+    PhotoDestinationExists, PhotoRecoveryError, PhotoStorage, is_managed_source, validate_original,
 )
 
 logger = logging.getLogger(__name__)
@@ -423,31 +423,30 @@ class Database:
                 validate_original(photo["original_path"], MEDIA_DIR)
         while True:
             code = self._reserve_product_code()
-            product_dir = MEDIA_DIR / code
             try:
-                product_dir.mkdir(parents=True, exist_ok=False)
-            except FileExistsError:
-                # Another process may have created the folder after reservation.
+                return self._create_reserved_product(code, data, photo_ids)
+            except PhotoDestinationExists:
                 continue
-            break
-        copied_files = []
 
+    def _create_reserved_product(self, code, data, photo_ids):
+        storage = PhotoStorage(MEDIA_DIR, self.db_path)
         try:
             with self.connection() as con:
+                con.execute('BEGIN IMMEDIATE')
+                storage.recover(con)
                 photo_rows = self._photo_rows_by_ids(con, photo_ids)
                 if len(photo_rows) != len(photo_ids):
                     raise RuntimeError("No se encontraron todas las fotos seleccionadas.")
-
-                for position, row in enumerate(photo_rows, start=1):
+                sources = []
+                for row in photo_rows:
                     source = Path(row["original_path"])
-                    if not source.exists():
+                    validate_original(source, MEDIA_DIR)
+                    if not source.is_file():
                         raise FileNotFoundError(f"No existe la imagen original:\n{source}")
-
-                    ext = source.suffix.lower() or ".jpg"
-                    destination = product_dir / f"{code}-{position:02d}{ext}"
-                    shutil.copy2(source, destination)
-                    copied_files.append(destination)
-
+                    sources.append((row['id'], source))
+                operation, staged = storage.prepare(code, sources, create_only=True)
+                storage.install_new(operation, code)
+                product_dir = storage.product_folder(code)
                 cur = con.execute(
                     '''
                     INSERT INTO products(
@@ -472,9 +471,7 @@ class Database:
                 )
                 product_id = cur.lastrowid
 
-                for position, (row, copied_path) in enumerate(
-                    zip(photo_rows, copied_files), start=1
-                ):
+                for position, (photo_id, filename) in enumerate(staged, start=1):
                     con.execute(
                         '''
                         INSERT INTO product_photos(
@@ -484,18 +481,28 @@ class Database:
                         ''',
                         (
                             product_id,
-                            row["id"],
+                            photo_id,
                             position,
-                            str(copied_path.resolve()),
+                            str((product_dir / filename).resolve()),
                         ),
                     )
 
-            return product_id, code
-
+                con.execute('INSERT INTO photo_file_commits(operation_id) VALUES (?)',
+                            (operation.name,))
         except Exception:
-            if product_dir.exists():
-                shutil.rmtree(product_dir, ignore_errors=True)
+            try:
+                self._recover_photo_operations()
+            except Exception as recovery_error:
+                raise PhotoRecoveryError(
+                    'No se pudo recuperar la creación del producto. Se conservan los '
+                    'archivos de recuperación. ' + str(recovery_error)
+                ) from recovery_error
             raise
+        try:
+            self._recover_photo_operations()
+        except (OSError, PhotoRecoveryError, sqlite3.Error):
+            logger.exception('Producto creado; limpieza de preparación pendiente')
+        return product_id, code
 
     def register_photo_file(self, path: Path):
         path = Path(path).resolve()
