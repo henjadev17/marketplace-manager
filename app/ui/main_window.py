@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from app.config import EXPORT_DIR
 from app.data.database import Database
 from app.services.export_service import export_products
 from app.services.thumbnail_service import ThumbnailTask
@@ -26,13 +25,13 @@ ROLE_PHOTO_ID = Qt.UserRole
 ROLE_PATH = Qt.UserRole + 1
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, db=None):
         super().__init__()
         self.setWindowTitle("Marketplace Manager v0.9.2")
         self.resize(1400, 850)
         self.setMinimumSize(1100, 720)
 
-        self.db = Database()
+        self.db = Database() if db is None else db
         self.theme_manager = ThemeManager(QApplication.instance(), self.db)
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(4)
@@ -500,7 +499,7 @@ class MainWindow(QMainWindow):
             self.photo_list.addItem(item)
             self.item_by_path[photo["original_path"]] = item
 
-            task = ThumbnailTask(photo["original_path"])
+            task = ThumbnailTask(photo["original_path"], self.db.paths.thumbnail_dir)
             task.signals.ready.connect(self.thumbnail_ready)
             self.thread_pool.start(task)
 
@@ -621,7 +620,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Sin productos", "Todavía no hay productos para exportar.")
             return
 
-        default = EXPORT_DIR / "marketplace.xlsx"
+        default = self.db.paths.export_dir / "marketplace.xlsx"
         filename, _ = QFileDialog.getSaveFileName(
             self, "Guardar Excel", str(default), "Excel (*.xlsx)"
         )

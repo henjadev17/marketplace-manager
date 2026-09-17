@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bind database media, thumbnail cache and exports to explicit per-database paths while preserving the default Documents/MarketplaceManager layout.
+- Reuse a per-database photo storage service for recovery, source validation and available photo-folder numbers; isolate custom databases and UI paths in regression tests.
+
 - Make product deletion recoverable with a journaled temporary backup and SQLite commit marker; restore uncommitted deletes and finish committed cleanup after restart.
 - Preserve unknown files and newly occupied product paths, and show deletion errors in the product list.
 

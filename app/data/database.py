@@ -1,18 +1,15 @@
 import logging
-import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 from app.config import (
-    DB_PATH,
+    DataPaths,
     DEFAULT_TEMPLATE,
     IMAGE_EXTENSIONS,
-    MEDIA_DIR,
-    ensure_app_dirs,
 )
 from app.services.photo_storage import (
-    PhotoDestinationExists, PhotoRecoveryError, PhotoStorage, is_managed_source, validate_original,
+    PhotoDestinationExists, PhotoRecoveryError, PhotoStorage,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,9 +78,11 @@ CREATE TABLE IF NOT EXISTS product_code_sequence (
 
 
 class Database:
-    def __init__(self, db_path: Path = DB_PATH):
-        ensure_app_dirs()
-        self.db_path = db_path
+    def __init__(self, db_path: Path = None):
+        self.paths = DataPaths.for_database(db_path)
+        self.paths.ensure_directories()
+        self.db_path = self.paths.db_path
+        self.photo_storage = PhotoStorage(self.paths.media_dir, self.db_path)
         with self.connection() as con:
             con.executescript(SCHEMA)
             self._migrate(con)
@@ -313,12 +312,12 @@ class Database:
         }
 
     def scan_folder(self, folder: Path, recursive=False):
-        validate_original(folder, MEDIA_DIR)
+        self.photo_storage.validate_original(folder)
         iterator = folder.rglob("*") if recursive else folder.iterdir()
         seen = 0
         with self.connection() as con:
             for path in iterator:
-                if is_managed_source(path, MEDIA_DIR):
+                if self.photo_storage.is_managed_source(path):
                     continue
                 if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
                     continue
@@ -390,9 +389,7 @@ class Database:
             ) AS n FROM products WHERE code LIKE 'PROD-%'
         ''').fetchone()
         number = int(row['n'])
-        while os.path.lexists(MEDIA_DIR / f"PROD-{number:04d}"):
-            number += 1
-        return number
+        return self.photo_storage.next_available_number(number)
 
     def _reserve_product_code(self):
         # Commit the reservation before filesystem work; failed creates leave gaps.
@@ -419,7 +416,7 @@ class Database:
         # Validate even legacy photo records before creating any managed files.
         with self.connection() as con:
             for photo in self._photo_rows_by_ids(con, photo_ids):
-                validate_original(photo["original_path"], MEDIA_DIR)
+                self.photo_storage.validate_original(photo["original_path"])
         while True:
             code = self._reserve_product_code()
             try:
@@ -428,7 +425,7 @@ class Database:
                 continue
 
     def _create_reserved_product(self, code, data, photo_ids):
-        storage = PhotoStorage(MEDIA_DIR, self.db_path)
+        storage = self.photo_storage
         try:
             with self.connection() as con:
                 con.execute('BEGIN IMMEDIATE')
@@ -439,7 +436,7 @@ class Database:
                 sources = []
                 for row in photo_rows:
                     source = Path(row["original_path"])
-                    validate_original(source, MEDIA_DIR)
+                    self.photo_storage.validate_original(source)
                     if not source.is_file():
                         raise FileNotFoundError(f"No existe la imagen original:\n{source}")
                     sources.append((row['id'], source))
@@ -505,7 +502,7 @@ class Database:
 
     def register_photo_file(self, path: Path):
         path = Path(path).resolve()
-        validate_original(path, MEDIA_DIR)
+        self.photo_storage.validate_original(path)
 
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"No existe la imagen:\n{path}")
@@ -543,7 +540,7 @@ class Database:
     def _recover_photo_operations(self):
         with self.connection() as con:
             con.execute("BEGIN IMMEDIATE")
-            PhotoStorage(MEDIA_DIR, self.db_path).recover(con)
+            self.photo_storage.recover(con)
 
     def sync_product_photos(self, product_id, ordered_photo_ids, rotations=None):
         """Save ordered photo copies, retaining the previous folder until commit."""
@@ -556,7 +553,7 @@ class Database:
                for photo_id, degrees in rotations.items()):
             raise ValueError("Los giros deben ser múltiplos de 90° para las fotos seleccionadas.")
 
-        storage = PhotoStorage(MEDIA_DIR, self.db_path)
+        storage = self.photo_storage
         try:
             with self.connection() as con:
                 con.execute("BEGIN IMMEDIATE")
@@ -586,7 +583,7 @@ class Database:
                         if saved.is_file():
                             sources.append((row['id'], saved))
                             continue
-                    validate_original(source, MEDIA_DIR)
+                    self.photo_storage.validate_original(source)
                     if not source.is_file():
                         raise FileNotFoundError(f"No existe la imagen original: {source}")
                     sources.append((row["id"], source))
@@ -716,7 +713,7 @@ class Database:
             )
 
     def delete_product(self, product_id):
-        storage = PhotoStorage(MEDIA_DIR, self.db_path)
+        storage = self.photo_storage
         try:
             with self.connection() as con:
                 con.execute("BEGIN IMMEDIATE")

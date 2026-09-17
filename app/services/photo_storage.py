@@ -71,6 +71,17 @@ class PhotoStorage:
         database_key = hashlib.sha256(self.database.encode('utf-8')).hexdigest()
         self.operations = self.media / '.photo-operations' / database_key
 
+    def validate_original(self, path):
+        validate_original(path, self.media)
+
+    def is_managed_source(self, path):
+        return is_managed_source(path, self.media)
+
+    def next_available_number(self, number):
+        while os.path.lexists(self.media / f'PROD-{number:04d}'):
+            number += 1
+        return number
+
     def _checked(self, path):
         """Never rename or remove outside media or through a symlink/junction."""
         path = Path(path).absolute()
