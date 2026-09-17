@@ -274,5 +274,9 @@ class ProductsDialog(QDialog):
             "Las fotos originales NO se eliminarán.\n\n¿Continuar?",
         )
         if answer == QMessageBox.Yes:
-            self.db.delete_product(product_id)
+            try:
+                self.db.delete_product(product_id)
+            except Exception as exc:
+                QMessageBox.warning(self, 'No se pudo eliminar el producto', str(exc))
+                return
             self.refresh()
