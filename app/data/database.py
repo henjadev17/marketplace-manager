@@ -85,7 +85,20 @@ class Database:
         self.photo_storage = PhotoStorage(self.paths.media_dir, self.db_path)
         with self.connection() as con:
             con.executescript(SCHEMA)
-            self._migrate(con)
+            # Rebuild a referenced table without cascading its child rows.
+            # Disable FK enforcement only outside the migration transaction.
+            con.execute('PRAGMA foreign_keys = OFF')
+            try:
+                con.execute('BEGIN IMMEDIATE')
+                self._migrate(con)
+                if con.execute('PRAGMA foreign_key_check').fetchone():
+                    raise sqlite3.IntegrityError('La migración detectó referencias inválidas.')
+                con.commit()
+            except Exception:
+                con.rollback()
+                raise
+            finally:
+                con.execute('PRAGMA foreign_keys = ON')
         self._recover_photo_operations()
         self._ensure_default_settings()
 
@@ -118,7 +131,7 @@ class Database:
         if "template_id" not in product_columns:
             con.execute(
                 "ALTER TABLE products "
-                "ADD COLUMN template_id INTEGER"
+                "ADD COLUMN template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL"
             )
         if 'condition_rating' not in product_columns:
             con.execute('ALTER TABLE products ADD COLUMN condition_rating INTEGER '
@@ -136,6 +149,37 @@ class Database:
                 "ALTER TABLE product_photos "
                 "ADD COLUMN copied_path TEXT NOT NULL DEFAULT ''"
             )
+        self._migrate_template_reference(con)
+
+    def _migrate_template_reference(self, con):
+        foreign_keys = con.execute('PRAGMA foreign_key_list(products)').fetchall()
+        if any(row['from'] == 'template_id' and row['table'] == 'templates'
+               and row['to'] == 'id' and row['on_delete'] == 'SET NULL' for row in foreign_keys):
+            return
+        schema = con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'products'").fetchone()[0]
+        related = con.execute("SELECT sql FROM sqlite_master WHERE tbl_name = 'products' "
+                              "AND type IN ('index', 'trigger') AND sql IS NOT NULL").fetchall()
+        sequence = con.execute("SELECT seq FROM sqlite_sequence WHERE name = 'products'").fetchone()
+        columns = [row['name'] for row in con.execute('PRAGMA table_xinfo(products)') if row['hidden'] == 0]
+        quoted = ['"' + name.replace('"', '""') + '"' for name in columns]
+        # Reuse the original declarations, including defaults and CHECK constraints.
+        end = schema.rfind(')')
+        definition = schema[schema.index('('):end]
+        con.execute('CREATE TABLE "_products_template_fk" ' + definition +
+                    ', FOREIGN KEY(template_id) REFERENCES templates(id) ON DELETE SET NULL)' + schema[end + 1:])
+        expressions = [
+            'CASE WHEN template_id IN (SELECT id FROM templates) THEN template_id ELSE NULL END'
+            if name == 'template_id' else column
+            for name, column in zip(columns, quoted)
+        ]
+        con.execute('INSERT INTO "_products_template_fk" (' + ', '.join(quoted) + ') SELECT ' +
+                    ', '.join(expressions) + ' FROM products')
+        con.execute('DROP TABLE products')
+        con.execute('ALTER TABLE "_products_template_fk" RENAME TO products')
+        for row in related:
+            con.execute(row['sql'])
+        if sequence:
+            con.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'products'", (sequence[0],))
 
     def _ensure_default_settings(self):
         defaults = {

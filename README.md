@@ -210,6 +210,15 @@ ajenos, enlaces o una ubicación ocupada durante la restauración detienen la op
 y conservan el respaldo. Una carpeta nueva en la ubicación de un producto eliminado
 no se borra al completar una limpieza pendiente.
 
+### Integridad de plantillas
+
+Las referencias de productos a plantillas están protegidas por una clave foránea
+SQLite con `ON DELETE SET NULL`. La migración convierte referencias antiguas
+inexistentes en valores vacíos, conservando descripciones, notas y fotos. Si necesita
+reconstruir la tabla de productos, lo hace dentro de una transacción y conserva sus
+índices, disparadores y contador de IDs. El gestor actual de plantillas es la única
+interfaz; se retiró el diálogo antiguo sin uso.
+
 ### Ejecutar la suite
 
 ```powershell
@@ -262,11 +271,5 @@ mantiene 0.9.2 y no crea una nueva publicación.
 - SQLite y los archivos siguen siendo sistemas separados; la creación, eliminación
   y actualización de fotos utilizan un registro recuperable. Esto no sustituye
   un respaldo externo frente a fallos físicos del disco.
-- `products.template_id` no tiene clave foránea. El borrado desde la aplicación
-  limpia sus referencias en una transacción y conserva las descripciones guardadas.
-  Las referencias antiguas o externas inexistentes usan la plantilla predeterminada
-  al abrir el editor; una restricción de esquema queda pendiente.
-- El diálogo heredado `template_dialog.py` llama a `save_template_settings`, que
-  ya no existe; la ventana principal utiliza `TemplateManagerDialog`.
 
 Estos puntos se documentan sin refactorizar ni cambiar el comportamiento estable.
