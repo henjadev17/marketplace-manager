@@ -24,11 +24,31 @@ dependencias del archivo existente y configura pytest.
 ## Instalación
 
 Usar Windows, Git y Python 3.11 o superior con el lanzador `py`. CI usa Python 3.11.
-Desde PowerShell:
+Clona el proyecto:
 
 ```powershell
 git clone https://github.com/henjadev17/marketplace-manager.git
 cd marketplace-manager
+```
+
+Para iniciar con doble clic, abre **Iniciar.cmd** en la raíz del proyecto.
+Desde **Git Bash**, ejecuta un solo comando:
+
+```bash
+./scripts/start.sh
+```
+
+Ambas opciones crean `.venv` si falta, instalan las dependencias de aplicación y
+desarrollo y abren Marketplace Manager. La primera ejecución requiere Internet;
+las siguientes omiten la instalación salvo que cambie `requirements.txt` o
+`requirements-dev.txt`. No necesitas activar el entorno ni ejecutar setup antes.
+Si ocurre un error al abrir con doble clic, la consola queda abierta para leerlo.
+Python 3.11 o superior debe estar instalado; se usa `py` o `python` disponible.
+Desde PowerShell también puedes ejecutar `.\Iniciar.cmd`.
+
+Los comandos separados de desarrollo siguen disponibles:
+
+```powershell
 .\scripts\setup.ps1
 .\scripts\run.ps1
 ```
