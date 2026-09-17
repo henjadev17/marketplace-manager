@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import shutil
 import threading
 
 import pytest
@@ -45,16 +44,16 @@ def test_preview_does_not_consume_a_number(db, product_data):
 
 
 def test_folder_created_after_reservation_is_preserved(db, product_data, isolated_storage, monkeypatch):
-    mkdir = Path.mkdir
+    rename = Path.rename
     occupied = isolated_storage / 'media' / 'PROD-0001'
 
-    def racing_mkdir(path, *args, **kwargs):
-        if path == occupied:
-            mkdir(path)
-            (path / 'keep.jpg').write_bytes(b'keep')
-        return mkdir(path, *args, **kwargs)
+    def racing_rename(path, target):
+        if Path(target) == occupied and path.name == 'stage':
+            occupied.mkdir()
+            (occupied / 'keep.jpg').write_bytes(b'keep')
+        return rename(path, target)
 
-    monkeypatch.setattr(Path, 'mkdir', racing_mkdir)
+    monkeypatch.setattr(Path, 'rename', racing_rename)
     assert db.create_product(product_data, [])[1] == 'PROD-0002'
     assert (occupied / 'keep.jpg').read_bytes() == b'keep'
 
@@ -78,16 +77,14 @@ def test_migration_starts_after_existing_highest_code(db, product_data):
         assert con.execute("SELECT title FROM products WHERE code = 'PROD-0042'").fetchone()[0] == 'Existing'
 
 
-def test_concurrent_creation_uses_separate_folders(db, product_data, source_photos, monkeypatch):
+def test_concurrent_creation_uses_separate_folders(db, product_data, source_photos):
     photo_id, source = source_photos[0]
     barrier = threading.Barrier(2)
-    copy = shutil.copy2
-    def simultaneous_copy(src, dst, *args, **kwargs):
+    def create():
         barrier.wait(timeout=10)
-        return copy(src, dst, *args, **kwargs)
-    monkeypatch.setattr(shutil, 'copy2', simultaneous_copy)
+        return db.create_product(product_data, [photo_id])
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(db.create_product, product_data, [photo_id]) for _ in range(2)]
+        futures = [pool.submit(create) for _ in range(2)]
         created = [future.result(timeout=15) for future in futures]
     assert {code for _, code in created} == {'PROD-0001', 'PROD-0002'}
     for product_id, code in created:

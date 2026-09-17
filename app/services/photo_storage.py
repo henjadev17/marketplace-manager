@@ -40,6 +40,10 @@ class PhotoRecoveryError(RuntimeError):
     """Keep recovery evidence intact and stop writes until it can be recovered."""
 
 
+class PhotoDestinationExists(FileExistsError):
+    """A new product must reserve another code without touching this entry."""
+
+
 def is_managed_source(path, media_dir):
     return Path(path).resolve().is_relative_to(Path(media_dir).resolve())
 
@@ -102,13 +106,20 @@ class PhotoStorage:
         # Keep the journal until every backup/staged file has been removed.
         for name in ('stage', 'discard', 'backup'):
             self._remove_tree(operation / name)
-        for name in ('manifest.tmp', 'manifest.json'):
+        for name in ('manifest.tmp', 'manifest.json', 'cancelled'):
             self._checked(operation / name).unlink(missing_ok=True)
         operation.rmdir()
 
-    def prepare(self, code, sources, rotations=None):
+    def _mark_cancelled(self, operation):
+        with self._checked(operation / 'cancelled').open('wb') as stream:
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def prepare(self, code, sources, rotations=None, create_only=False):
         """sources: ordered (photo_id, source_path); return operation and filenames."""
         final = self.product_folder(code)
+        if create_only and os.path.lexists(final):
+            raise PhotoDestinationExists(str(final))
         self._checked(self.operations).mkdir(parents=True, exist_ok=True)
         operation = self.operations / uuid.uuid4().hex
         stage = operation / 'stage'
@@ -133,6 +144,8 @@ class PhotoStorage:
             staged.append((photo_id, filename))
         manifest = dict(version=1, database=self.database, code=code,
                         had_original=final.exists(), files=files)
+        if create_only:
+            manifest.update(kind='create', had_original=False)
         temporary = operation / 'manifest.tmp'
         with temporary.open('w', encoding='utf-8') as stream:
             json.dump(manifest, stream, ensure_ascii=False)
@@ -140,6 +153,16 @@ class PhotoStorage:
             os.fsync(stream.fileno())
         temporary.replace(operation / 'manifest.json')
         return operation, staged
+
+    def install_new(self, operation, code):
+        """Windows directory rename fails atomically if the target exists."""
+        final = self.product_folder(code)
+        if os.path.lexists(final):
+            raise PhotoDestinationExists(str(final))
+        try:
+            self._checked(operation / 'stage').rename(final)
+        except FileExistsError as exc:
+            raise PhotoDestinationExists(str(final)) from exc
 
     def install(self, operation, code):
         final = self.product_folder(code)
@@ -184,6 +207,14 @@ class PhotoStorage:
         discard = self._checked(operation / 'discard')
         committed = con.execute('SELECT 1 FROM photo_file_commits WHERE operation_id = ?',
                                 (operation.name,)).fetchone()
+        cancelled = self._checked(operation / 'cancelled')
+        if (not committed and manifest.get('kind') == 'create'
+                and (stage.exists() or discard.exists() or cancelled.exists())):
+            # Persist "never installed" before removing stage. Otherwise a crash
+            # during cleanup could mistake a collision for our installed folder.
+            self._mark_cancelled(operation)
+            self._cleanup(operation)
+            return
         if committed:
             # Verify the new files before destroying the last previous copies.
             if not final.is_dir() or not isinstance(manifest['files'], dict):
@@ -198,7 +229,18 @@ class PhotoStorage:
                 final.rename(discard)
             backup.rename(final)
         elif not manifest['had_original'] and not stage.exists() and final.exists():
+            if manifest.get('kind') == 'create':
+                # Do not remove unrecognized files added after an interruption.
+                if set(p.name for p in final.iterdir()) != set(manifest['files']):
+                    raise ValueError('La carpeta de creación contiene archivos desconocidos.')
+                for name, expected in manifest['files'].items():
+                    if not re.fullmatch(re.escape(code) + r'-\d{2,}\.[a-zA-Z0-9]+', name):
+                        raise ValueError('Nombre de foto inválido en el registro.')
+                    if file_digest(self._checked(final / name)) != expected:
+                        raise ValueError('La foto de creación cambió; se conserva para revisión.')
             final.rename(discard)
         elif manifest['had_original'] and not final.exists():
             raise ValueError('No se encuentra la carpeta anterior ni su respaldo.')
+        if not committed and manifest.get('kind') == 'create':
+            self._mark_cancelled(operation)
         self._cleanup(operation)
