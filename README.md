@@ -169,8 +169,7 @@ asociadas pueden seguir usando sus propias copias si falta el original externo.
 
 Esta protección cubre errores de guardado y cierre abrupto del proceso; no sustituye
 un respaldo general frente a fallos físicos de disco. No cambia los códigos de
-producto. La eliminación mantiene su flujo actual, con recuperación pendiente
-antes de eliminar.
+producto. La eliminación también utiliza un respaldo temporal recuperable.
 
 ### Creación recuperable
 
@@ -185,6 +184,16 @@ La preparación mantiene un bloqueo de escritura SQLite para que otra ventana no
 recupere una operación activa. Si las copias tardan demasiado, otra escritura
 puede informar que la base está ocupada y requerir un nuevo intento. Los archivos
 desconocidos o alterados se conservan para revisión en lugar de eliminarlos.
+
+### Eliminación recuperable
+
+Al eliminar un producto, sus copias registradas se trasladan primero al respaldo
+temporal del registro de operaciones. Si se interrumpe antes de confirmar SQLite,
+se restauran el producto y las fotos al reiniciar; si la eliminación ya se confirmó,
+se completa la limpieza del respaldo. Los originales no se eliminan. Archivos
+ajenos, enlaces o una ubicación ocupada durante la restauración detienen la operación
+y conservan el respaldo. Una carpeta nueva en la ubicación de un producto eliminado
+no se borra al completar una limpieza pendiente.
 
 ### Ejecutar la suite
 
@@ -233,9 +242,9 @@ mantiene 0.9.2 y no crea una nueva publicación.
 
 - Database mezcla persistencia con archivos y crea directorios globales incluso
   al recibir una base personalizada.
-- SQLite y los archivos siguen siendo sistemas separados; la creación de productos
-  y el guardado de fotos utilizan un registro recuperable. Falta extender esa
-  protección a la eliminación de productos.
+- SQLite y los archivos siguen siendo sistemas separados; la creación, eliminación
+  y actualización de fotos utilizan un registro recuperable. Esto no sustituye
+  un respaldo externo frente a fallos físicos del disco.
 - `products.template_id` no tiene clave foránea. El borrado desde la aplicación
   limpia sus referencias en una transacción y conserva las descripciones guardadas.
   Las referencias antiguas o externas inexistentes usan la plantilla predeterminada

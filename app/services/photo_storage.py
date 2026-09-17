@@ -164,6 +164,64 @@ class PhotoStorage:
         except FileExistsError as exc:
             raise PhotoDestinationExists(str(final)) from exc
 
+    def prepare_delete(self, code, copied_paths):
+        """Journal and quarantine only this product's registered copies."""
+        final = self.product_folder(code)
+        allowed = set()
+        for value in copied_paths:
+            if not value:
+                continue
+            path = self._checked(Path(value))
+            if path.parent != final or not re.fullmatch(re.escape(code) + r'-\d{2,}\.[a-zA-Z0-9]+', path.name):
+                raise PhotoRecoveryError('La copia no pertenece a la carpeta del producto.')
+            allowed.add(path.name)
+        files = {}
+        if final.exists():
+            for entry in final.iterdir():
+                self._checked(entry)
+                if entry.name not in allowed or not entry.is_file():
+                    raise PhotoRecoveryError('La carpeta contiene archivos ajenos; no se eliminará.')
+                files[entry.name] = file_digest(entry)
+        self._checked(self.operations).mkdir(parents=True, exist_ok=True)
+        operation = self.operations / uuid.uuid4().hex
+        operation.mkdir()
+        manifest = dict(version=1, database=self.database, code=code, kind='delete',
+                        had_original=final.exists(), files=files)
+        temporary = operation / 'manifest.tmp'
+        with temporary.open('w', encoding='utf-8') as stream:
+            json.dump(manifest, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(operation / 'manifest.json')
+        if manifest['had_original']:
+            final.rename(self._checked(operation / 'backup'))
+        return operation
+
+    def _recover_delete(self, operation, manifest, committed):
+        final = self.product_folder(manifest['code'])
+        backup = self._checked(operation / 'backup')
+        if committed and backup.exists():
+            # A previous cleanup can have removed only some registered files.
+            # Validate the remaining subset before removing anything else.
+            entries = list(backup.iterdir())
+            for entry in entries:
+                self._checked(entry)
+                if (entry.name not in manifest['files'] or not entry.is_file()
+                        or file_digest(entry) != manifest['files'][entry.name]):
+                    raise ValueError('El respaldo contiene archivos desconocidos o modificados.')
+            for entry in entries:
+                entry.unlink()
+            backup.rmdir()
+        elif not committed:
+            if backup.exists():
+                if os.path.lexists(final):
+                    raise ValueError('La carpeta de destino está ocupada; se conserva el respaldo.')
+                backup.rename(final)
+            elif manifest['had_original'] and not final.exists():
+                raise ValueError('No se encuentra la carpeta para restaurar el producto.')
+        # Never touch a new directory appearing at the old product path after commit.
+        self._cleanup(operation)
+
     def install(self, operation, code):
         final = self.product_folder(code)
         if final.exists():
@@ -207,6 +265,9 @@ class PhotoStorage:
         discard = self._checked(operation / 'discard')
         committed = con.execute('SELECT 1 FROM photo_file_commits WHERE operation_id = ?',
                                 (operation.name,)).fetchone()
+        if manifest.get('kind') == 'delete':
+            self._recover_delete(operation, manifest, committed)
+            return
         cancelled = self._checked(operation / 'cancelled')
         if (not committed and manifest.get('kind') == 'create'
                 and (stage.exists() or discard.exists() or cancelled.exists())):

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make product deletion recoverable with a journaled temporary backup and SQLite commit marker; restore uncommitted deletes and finish committed cleanup after restart.
+- Preserve unknown files and newly occupied product paths, and show deletion errors in the product list.
+
 - Make product creation recoverable: verify staged photo copies, install without replacing existing folders, and commit product rows with a recovery marker.
 - Recover interrupted creations on restart, preserving committed products and originals; add process-exit and failure-injection regression tests.
 

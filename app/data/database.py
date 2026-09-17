@@ -1,6 +1,5 @@
 import logging
 import os
-import shutil
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -717,17 +716,32 @@ class Database:
             )
 
     def delete_product(self, product_id):
-        with self.connection() as con:
-            con.execute("BEGIN IMMEDIATE")
-            storage = PhotoStorage(MEDIA_DIR, self.db_path)
-            storage.recover(con)
-            product = con.execute("SELECT code FROM products WHERE id = ?", (product_id,)).fetchone()
-            if not product:
-                return
-            product_dir = storage.product_folder(product["code"])
-            con.execute("DELETE FROM products WHERE id = ?", (product_id,))
-        if product_dir.exists():
-            shutil.rmtree(product_dir, ignore_errors=True)
+        storage = PhotoStorage(MEDIA_DIR, self.db_path)
+        try:
+            with self.connection() as con:
+                con.execute("BEGIN IMMEDIATE")
+                storage.recover(con)
+                product = con.execute("SELECT code FROM products WHERE id = ?", (product_id,)).fetchone()
+                if not product:
+                    return
+                paths = [row['copied_path'] for row in con.execute(
+                    'SELECT copied_path FROM product_photos WHERE product_id = ?', (product_id,))]
+                operation = storage.prepare_delete(product['code'], paths)
+                con.execute("DELETE FROM products WHERE id = ?", (product_id,))
+                con.execute('INSERT INTO photo_file_commits(operation_id) VALUES (?)', (operation.name,))
+        except Exception:
+            try:
+                self._recover_photo_operations()
+            except Exception as recovery_error:
+                raise PhotoRecoveryError(
+                    'No se pudo restaurar la eliminación. Se conserva el respaldo. '
+                    + str(recovery_error)
+                ) from recovery_error
+            raise
+        try:
+            self._recover_photo_operations()
+        except (OSError, PhotoRecoveryError, sqlite3.Error):
+            logger.exception('Producto eliminado; limpieza de respaldo pendiente')
 
     def export_rows(self):
         result = []
