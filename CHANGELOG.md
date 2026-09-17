@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Enforce product template references with SQLite ON DELETE SET NULL; migrate orphan references without changing saved descriptions or photo associations.
+- Preserve table constraints, indexes, triggers and product ID sequence during the transactional migration; remove the unused legacy template dialog.
+
 - Bind database media, thumbnail cache and exports to explicit per-database paths while preserving the default Documents/MarketplaceManager layout.
 - Reuse a per-database photo storage service for recovery, source validation and available photo-folder numbers; isolate custom databases and UI paths in regression tests.
 

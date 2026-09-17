@@ -55,8 +55,11 @@ def test_editor_uses_default_for_legacy_missing_template(db, product_data):
     app = QApplication.instance() or QApplication([])
     default = db.create_template('ZZ default', 'Default body')
     db.set_default_template_id(default)
-    product_id, _ = db.create_product(dict(product_data, template_id=999999,
+    product_id, _ = db.create_product(dict(product_data,
                                          final_description='Saved text'), [])
+    # Simulate an old/external invalid reference; normal writes now reject it.
+    with sqlite3.connect(db.db_path) as con:
+        con.execute('UPDATE products SET template_id = 999999 WHERE id = ?', (product_id,))
     dialog = ProductEditDialog(db, product_id)
     try:
         assert dialog.template.currentData() == default
